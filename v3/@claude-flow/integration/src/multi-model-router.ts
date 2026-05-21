@@ -45,6 +45,11 @@ export type ProviderType =
   | 'litellm'     // Unified API
   | 'onnx'        // Free local inference
   | 'gemini'      // Google Gemini
+  | 'deepseek'    // DeepSeek (Anthropic-compatible)
+  | 'qwen'        // Qwen / DashScope (OpenAI-compatible)
+  | 'kimi'        // Kimi / Moonshot (OpenAI-compatible)
+  | 'zhipu'       // Zhipu / BigModel (OpenAI-compatible)
+  | 'doubao'      // Doubao / Ark (OpenAI-compatible)
   | 'custom';     // Custom providers
 
 /**
@@ -321,6 +326,215 @@ const DEFAULT_MODELS: ModelConfig[] = [
       supportsStreaming: true,
       supportsTools: true,
       supportsVision: true,
+      supportsJson: true,
+      maxOutputTokens: 4096,
+    },
+  },
+  // DeepSeek (Anthropic-compatible, native)
+  {
+    id: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    provider: 'deepseek',
+    costPer1kInputTokens: 0.00040,
+    costPer1kOutputTokens: 0.00110,
+    latencyMs: 600,
+    qualityScore: 0.93,
+    capabilities: {
+      contextWindow: 1000000,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 384000,
+    },
+  },
+  {
+    id: 'deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash',
+    provider: 'deepseek',
+    costPer1kInputTokens: 0.00014,
+    costPer1kOutputTokens: 0.00028,
+    latencyMs: 250,
+    qualityScore: 0.85,
+    capabilities: {
+      contextWindow: 1000000,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 384000,
+    },
+  },
+  // Qwen (DashScope)
+  {
+    id: 'qwen3.6-max-preview',
+    name: 'Qwen 3.6 Max',
+    provider: 'qwen',
+    costPer1kInputTokens: 0.0011,
+    costPer1kOutputTokens: 0.0044,
+    latencyMs: 700,
+    qualityScore: 0.88,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: 'qwen3.6-plus',
+    name: 'Qwen 3.6 Plus',
+    provider: 'qwen',
+    costPer1kInputTokens: 0.00055,
+    costPer1kOutputTokens: 0.0022,
+    latencyMs: 450,
+    qualityScore: 0.82,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: 'qwen3.6-flash',
+    name: 'Qwen 3.6 Flash',
+    provider: 'qwen',
+    costPer1kInputTokens: 0,
+    costPer1kOutputTokens: 0,
+    latencyMs: 250,
+    qualityScore: 0.78,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  // Kimi (Moonshot)
+  {
+    id: 'kimi-k2.6',
+    name: 'Kimi K2.6',
+    provider: 'kimi',
+    costPer1kInputTokens: 0,
+    costPer1kOutputTokens: 0,
+    latencyMs: 600,
+    qualityScore: 0.90,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: 'kimi-k2-turbo-preview',
+    name: 'Kimi K2 Turbo',
+    provider: 'kimi',
+    costPer1kInputTokens: 0,
+    costPer1kOutputTokens: 0,
+    latencyMs: 300,
+    qualityScore: 0.80,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  // Zhipu (BigModel)
+  {
+    id: 'GLM-5.1',
+    name: 'GLM-5.1',
+    provider: 'zhipu',
+    costPer1kInputTokens: 0.0014,
+    costPer1kOutputTokens: 0.0014,
+    latencyMs: 700,
+    qualityScore: 0.87,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: 'GLM-5',
+    name: 'GLM-5',
+    provider: 'zhipu',
+    costPer1kInputTokens: 0.0007,
+    costPer1kOutputTokens: 0.0007,
+    latencyMs: 500,
+    qualityScore: 0.83,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  {
+    id: 'GLM-4.7-Flash',
+    name: 'GLM-4.7 Flash',
+    provider: 'zhipu',
+    costPer1kInputTokens: 0,
+    costPer1kOutputTokens: 0,
+    latencyMs: 200,
+    qualityScore: 0.76,
+    capabilities: {
+      contextWindow: 131072,
+      supportsStreaming: true,
+      supportsTools: true,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 8192,
+    },
+  },
+  // Doubao (Ark/Volcengine)
+  {
+    id: 'doubao-pro-32k',
+    name: 'Doubao Pro 32K',
+    provider: 'doubao',
+    costPer1kInputTokens: 0.0008,
+    costPer1kOutputTokens: 0.002,
+    latencyMs: 500,
+    qualityScore: 0.82,
+    capabilities: {
+      contextWindow: 32768,
+      supportsStreaming: true,
+      supportsTools: false,
+      supportsVision: false,
+      supportsJson: true,
+      maxOutputTokens: 4096,
+    },
+  },
+  {
+    id: 'doubao-lite-32k',
+    name: 'Doubao Lite 32K',
+    provider: 'doubao',
+    costPer1kInputTokens: 0.00011,
+    costPer1kOutputTokens: 0.00011,
+    latencyMs: 250,
+    qualityScore: 0.72,
+    capabilities: {
+      contextWindow: 32768,
+      supportsStreaming: true,
+      supportsTools: false,
+      supportsVision: false,
       supportsJson: true,
       maxOutputTokens: 4096,
     },
@@ -703,7 +917,8 @@ export class MultiModelRouter extends EventEmitter {
 
   private initializeProviderHealth(): void {
     const providers: ProviderType[] = [
-      'anthropic', 'openai', 'openrouter', 'ollama', 'litellm', 'onnx', 'gemini', 'custom'
+      'anthropic', 'openai', 'openrouter', 'ollama', 'litellm', 'onnx', 'gemini',
+      'deepseek', 'qwen', 'kimi', 'zhipu', 'doubao', 'custom'
     ];
 
     for (const provider of providers) {

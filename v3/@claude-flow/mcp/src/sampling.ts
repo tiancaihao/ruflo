@@ -361,3 +361,51 @@ export function createAnthropicProvider(apiKey: string): LLMProvider {
     },
   };
 }
+
+/**
+ * Create a DeepSeek provider (requires API key).
+ * Uses DeepSeek's Anthropic-compatible endpoint.
+ */
+export function createDeepSeekProvider(apiKey: string): LLMProvider {
+  return {
+    name: 'deepseek',
+    async createMessage(request: CreateMessageRequest): Promise<CreateMessageResult> {
+      const response = await fetch('https://api.deepseek.com/anthropic/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          model: 'deepseek-v4-flash',
+          max_tokens: request.maxTokens,
+          temperature: request.temperature,
+          system: request.systemPrompt,
+          messages: request.messages.map((m) => ({
+            role: m.role,
+            content: m.content.type === 'text' ? (m.content as any).text : m.content,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`DeepSeek API error: ${response.status}`);
+      }
+
+      const data = await response.json() as any;
+
+      return {
+        role: 'assistant',
+        content: {
+          type: 'text',
+          text: data.content[0]?.text || '',
+        },
+        model: data.model,
+        stopReason: data.stop_reason === 'end_turn' ? 'endTurn' : 'maxTokens',
+      };
+    },
+    async isAvailable(): Promise<boolean> {
+      return !!apiKey;
+    },
+  };
+}

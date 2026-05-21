@@ -177,6 +177,17 @@ const providerOptimizations: Record<string, ProviderOptimization> = {
       'Free - no cost optimization needed',
     ],
   },
+  deepseek: {
+    preferredTemperature: 0.7,
+    systemPromptOptimizations: [
+      'Be concise and direct',
+      'Use structured output when appropriate',
+    ],
+    costReductionStrategies: [
+      'Use deepseek-v4-flash for simple tasks',
+      'Batch similar requests',
+    ],
+  },
 };
 
 function loadProviderOptimizations(provider: string): ProviderOptimization {

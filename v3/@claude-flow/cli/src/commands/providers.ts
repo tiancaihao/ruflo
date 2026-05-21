@@ -26,6 +26,7 @@ const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   // #1725: Ollama Cloud — Tier-2 default per ADR-026 (~$100/mo flat-rate alternative
   // to per-token pricing). OpenAI-compat API at https://ollama.com/v1/chat/completions.
   { name: 'Ollama', type: 'LLM', models: 'gpt-oss:120b-cloud, llama3:70b-cloud, qwen2.5-coder:32b-cloud', envVar: 'OLLAMA_API_KEY', configName: 'ollama' },
+  { name: 'DeepSeek', type: 'LLM', models: 'deepseek-v4-pro, deepseek-v4-flash', envVar: 'DEEPSEEK_API_KEY', configName: 'deepseek' },
   { name: 'Transformers.js', type: 'Embedding', models: 'Xenova/all-MiniLM-L6-v2' },
   { name: 'Agentic Flow', type: 'Embedding', models: 'ONNX optimized' },
   { name: 'Mock', type: 'All', models: 'mock-*' },
@@ -53,6 +54,7 @@ function resolveApiKey(
     openai: 'OPENAI_API_KEY',
     google: 'GOOGLE_API_KEY',
     ollama: 'OLLAMA_API_KEY', // #1725 — Tier-2 routing
+    deepseek: 'DEEPSEEK_API_KEY',
   };
   const envVar = envMapping[providerName.toLowerCase()];
   if (envVar && process.env[envVar]) {
@@ -91,6 +93,12 @@ async function testProviderConnectivity(
     // #1725 — Ollama Cloud uses an OpenAI-compatible /v1 surface.
     ollama: {
       url: 'https://ollama.com/api/tags',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    },
+    deepseek: {
+      url: 'https://api.deepseek.com/v1/models',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
       },
@@ -349,6 +357,7 @@ const testCommand: Command = {
         { name: 'Anthropic', configName: 'anthropic' },
         { name: 'OpenAI', configName: 'openai' },
         { name: 'Google', configName: 'google' },
+        { name: 'DeepSeek', configName: 'deepseek' },
       ];
 
       // Add Ollama as a special case (endpoint-based, no API key)
@@ -471,6 +480,8 @@ const modelsCommand: Command = {
       data: [
         { model: 'claude-3.5-sonnet-20241022', provider: 'Anthropic', capability: 'Chat', context: '200K', cost: '$0.003/$0.015' },
         { model: 'claude-3-opus-20240229', provider: 'Anthropic', capability: 'Chat', context: '200K', cost: '$0.015/$0.075' },
+        { model: 'deepseek-v4-pro', provider: 'DeepSeek', capability: 'Chat', context: '1M', cost: '$0.00040/$0.00110' },
+        { model: 'deepseek-v4-flash', provider: 'DeepSeek', capability: 'Chat', context: '1M', cost: '$0.00014/$0.00028' },
         { model: 'gpt-4o', provider: 'OpenAI', capability: 'Chat', context: '128K', cost: '$0.005/$0.015' },
         { model: 'gpt-4-turbo', provider: 'OpenAI', capability: 'Chat', context: '128K', cost: '$0.01/$0.03' },
         { model: 'text-embedding-3-small', provider: 'OpenAI', capability: 'Embedding', context: '8K', cost: '$0.00002' },
@@ -558,6 +569,7 @@ export const providersCommand: Command = {
     output.writeln('Supported Providers:');
     output.printList([
       'Anthropic (Claude models)',
+      'DeepSeek (V4 Pro & Flash)',
       'OpenAI (GPT + embeddings)',
       'Transformers.js (local ONNX)',
       'Agentic Flow (optimized ONNX with SIMD)',

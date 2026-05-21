@@ -35,6 +35,11 @@ import { GoogleProvider } from './google-provider.js';
 import { CohereProvider } from './cohere-provider.js';
 import { OllamaProvider } from './ollama-provider.js';
 import { RuVectorProvider } from './ruvector-provider.js';
+import { DeepSeekProvider } from './deepseek-provider.js';
+import { QwenProvider } from './qwen-provider.js';
+import { KimiProvider } from './kimi-provider.js';
+import { ZhipuProvider } from './zhipu-provider.js';
+import { DoubaoProvider } from './doubao-provider.js';
 
 /**
  * Cache entry for request caching
@@ -71,6 +76,12 @@ export class ProviderManager extends EventEmitter {
   ) {
     super();
     this.logger = logger || consoleLogger;
+
+    // Auto-detect DeepSeek as default when DEEPSEEK_API_KEY is present
+    // and no explicit default provider was configured
+    if (!config.defaultProvider && process.env.DEEPSEEK_API_KEY) {
+      this.config.defaultProvider = 'deepseek';
+    }
   }
 
   /**
@@ -127,6 +138,16 @@ export class ProviderManager extends EventEmitter {
         return new OllamaProvider(options);
       case 'ruvector':
         return new RuVectorProvider(options);
+      case 'deepseek':
+        return new DeepSeekProvider(options);
+      case 'qwen':
+        return new QwenProvider(options);
+      case 'kimi':
+        return new KimiProvider(options);
+      case 'zhipu':
+        return new ZhipuProvider(options);
+      case 'doubao':
+        return new DoubaoProvider(options);
       default:
         throw new Error(`Unknown provider: ${config.provider}`);
     }

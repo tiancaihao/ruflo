@@ -599,6 +599,41 @@ export class ProviderFactory {
   }
 
   /**
+   * Create a DeepSeek provider definition.
+   */
+  static createDeepSeek(options?: {
+    displayName?: string;
+    models?: string[];
+    rateLimit?: RateLimitConfig;
+    costPerToken?: CostConfig;
+  }): LLMProviderDefinition {
+    return {
+      name: 'deepseek',
+      displayName: options?.displayName ?? 'DeepSeek',
+      models: options?.models ?? [
+        'deepseek-v4-pro',
+        'deepseek-v4-flash',
+      ],
+      capabilities: [
+        'completion',
+        'chat',
+        'streaming',
+        'function-calling',
+        'code-generation',
+      ],
+      rateLimit: options?.rateLimit ?? {
+        requestsPerMinute: 500,
+        tokensPerMinute: 500000,
+      },
+      costPerToken: options?.costPerToken ?? {
+        input: 0.0000004,
+        output: 0.0000011,
+        currency: 'USD',
+      },
+    };
+  }
+
+  /**
    * Create a local/self-hosted provider definition.
    */
   static createLocal(options: {

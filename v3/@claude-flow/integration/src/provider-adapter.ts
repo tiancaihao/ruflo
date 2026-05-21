@@ -57,6 +57,11 @@ export type ProviderType =
   | 'aws'
   | 'ollama'
   | 'huggingface'
+  | 'deepseek'
+  | 'qwen'
+  | 'kimi'
+  | 'zhipu'
+  | 'doubao'
   | 'custom';
 
 /**
@@ -348,6 +353,12 @@ export class ProviderAdapter extends EventEmitter {
       healthCheckInterval: config.healthCheckInterval ?? 60000,
       enableCaching: config.enableCaching ?? false,
       cacheTTL: config.cacheTTL ?? 300000,
+      // Auto-detect DeepSeek as default when DEEPSEEK_API_KEY is present
+      // and no explicit default was configured
+      defaultProviderId: config.defaultProviderId
+        ?? (process.env.DEEPSEEK_API_KEY ? 'deepseek' : undefined),
+      defaultModelId: config.defaultModelId
+        ?? (process.env.DEEPSEEK_API_KEY && !config.defaultModelId ? 'deepseek-v4-pro' : undefined),
       ...config,
     };
 
@@ -1126,6 +1137,195 @@ export function createDefaultProviders(): Provider[] {
       costPerToken: {
         inputPer1K: 0.01,
         outputPer1K: 0.03,
+        currency: 'USD',
+      },
+    },
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      type: 'deepseek',
+      models: [
+        {
+          id: 'deepseek-v4-pro',
+          name: 'DeepSeek V4 Pro',
+          maxContextLength: 1000000,
+          maxOutputTokens: 384000,
+          capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+        },
+        {
+          id: 'deepseek-v4-flash',
+          name: 'DeepSeek V4 Flash',
+          maxContextLength: 1000000,
+          maxOutputTokens: 384000,
+          capabilities: ['chat', 'code-generation', 'streaming', 'long-context'],
+        },
+      ],
+      capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+      status: 'available',
+      rateLimits: {
+        requestsPerMinute: 500,
+        tokensPerMinute: 500000,
+        currentRequests: 0,
+        currentTokens: 0,
+        resetAt: Date.now() + 60000,
+      },
+      costPerToken: {
+        inputPer1K: 0.00040,
+        outputPer1K: 0.00110,
+        currency: 'USD',
+      },
+    },
+    {
+      id: 'qwen',
+      name: 'Qwen (DashScope)',
+      type: 'qwen',
+      models: [
+        {
+          id: 'qwen3.6-max-preview',
+          name: 'Qwen 3.6 Max',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+        },
+        {
+          id: 'qwen3.6-plus',
+          name: 'Qwen 3.6 Plus',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'streaming', 'long-context'],
+        },
+        {
+          id: 'qwen3.6-flash',
+          name: 'Qwen 3.6 Flash',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'streaming'],
+        },
+      ],
+      capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+      status: 'available',
+      rateLimits: {
+        requestsPerMinute: 500,
+        tokensPerMinute: 500000,
+        currentRequests: 0,
+        currentTokens: 0,
+        resetAt: Date.now() + 60000,
+      },
+      costPerToken: {
+        inputPer1K: 0.0011,
+        outputPer1K: 0.0044,
+        currency: 'USD',
+      },
+    },
+    {
+      id: 'kimi',
+      name: 'Kimi (Moonshot)',
+      type: 'kimi',
+      models: [
+        {
+          id: 'kimi-k2.6',
+          name: 'Kimi K2.6',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+        },
+        {
+          id: 'kimi-k2-turbo-preview',
+          name: 'Kimi K2 Turbo',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'streaming'],
+        },
+      ],
+      capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+      status: 'available',
+      rateLimits: {
+        requestsPerMinute: 500,
+        tokensPerMinute: 500000,
+        currentRequests: 0,
+        currentTokens: 0,
+        resetAt: Date.now() + 60000,
+      },
+      costPerToken: {
+        inputPer1K: 0,
+        outputPer1K: 0,
+        currency: 'USD',
+      },
+    },
+    {
+      id: 'zhipu',
+      name: 'Zhipu (BigModel)',
+      type: 'zhipu',
+      models: [
+        {
+          id: 'GLM-5.1',
+          name: 'GLM-5.1',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+        },
+        {
+          id: 'GLM-5',
+          name: 'GLM-5',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'streaming', 'long-context'],
+        },
+        {
+          id: 'GLM-4.7-Flash',
+          name: 'GLM-4.7 Flash',
+          maxContextLength: 131072,
+          maxOutputTokens: 8192,
+          capabilities: ['chat', 'code-generation', 'streaming'],
+        },
+      ],
+      capabilities: ['chat', 'code-generation', 'function-calling', 'streaming', 'long-context'],
+      status: 'available',
+      rateLimits: {
+        requestsPerMinute: 500,
+        tokensPerMinute: 500000,
+        currentRequests: 0,
+        currentTokens: 0,
+        resetAt: Date.now() + 60000,
+      },
+      costPerToken: {
+        inputPer1K: 0.0014,
+        outputPer1K: 0.0014,
+        currency: 'USD',
+      },
+    },
+    {
+      id: 'doubao',
+      name: 'Doubao (Ark/Volcengine)',
+      type: 'doubao',
+      models: [
+        {
+          id: 'doubao-pro-32k',
+          name: 'Doubao Pro 32K',
+          maxContextLength: 32768,
+          maxOutputTokens: 4096,
+          capabilities: ['chat', 'code-generation', 'streaming'],
+        },
+        {
+          id: 'doubao-lite-32k',
+          name: 'Doubao Lite 32K',
+          maxContextLength: 32768,
+          maxOutputTokens: 4096,
+          capabilities: ['chat', 'code-generation', 'streaming'],
+        },
+      ],
+      capabilities: ['chat', 'code-generation', 'streaming'],
+      status: 'available',
+      rateLimits: {
+        requestsPerMinute: 300,
+        tokensPerMinute: 300000,
+        currentRequests: 0,
+        currentTokens: 0,
+        resetAt: Date.now() + 60000,
+      },
+      costPerToken: {
+        inputPer1K: 0.0008,
+        outputPer1K: 0.002,
         currency: 'USD',
       },
     },

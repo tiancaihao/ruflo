@@ -20,6 +20,11 @@ export type LLMProvider =
   | 'ruvector'
   | 'openrouter'
   | 'litellm'
+  | 'deepseek'
+  | 'qwen'
+  | 'kimi'
+  | 'zhipu'
+  | 'doubao'
   | 'custom';
 
 export type LLMModel =
@@ -56,6 +61,23 @@ export type LLMModel =
   | 'codellama'
   | 'phi-4'
   | 'deepseek-coder'
+  // DeepSeek Models
+  | 'deepseek-v4-pro'
+  | 'deepseek-v4-flash'
+  // Qwen Models
+  | 'qwen3.6-flash'
+  | 'qwen3.6-plus'
+  | 'qwen3.6-max-preview'
+  // Kimi Models
+  | 'kimi-k2-turbo-preview'
+  | 'kimi-k2.6'
+  // Zhipu Models
+  | 'GLM-4.7-Flash'
+  | 'GLM-5'
+  | 'GLM-5.1'
+  // Doubao Models
+  | 'doubao-lite-32k'
+  | 'doubao-pro-32k'
   // Generic
   | 'custom-model'
   | string;

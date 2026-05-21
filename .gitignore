@@ -64,7 +64,6 @@
 .hive-mind/
 .hive-mind/hive.db*
 .idea/
-.mcp.json
 .nyc_output/
 .pnpm-debug.log*
 .pnpm-store/
@@ -125,7 +124,6 @@ yarn-error.log*
 
 # Claude Flow generated files
 .claude/settings.local.json
-.mcp.json
 claude-flow.config.json
 .swarm/
 .hive-mind/

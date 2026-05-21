@@ -9,6 +9,7 @@
  * - Google (Gemini 2.0, 1.5 Pro, Flash)
  * - Cohere (Command R+, R, Light)
  * - Ollama (Local: Llama, Mistral, CodeLlama, Phi)
+ * - DeepSeek (V4 Pro, V4 Flash via Anthropic-compatible endpoint)
  *
  * Features:
  * - Load balancing (round-robin, latency, cost-based)
@@ -35,6 +36,13 @@ export { GoogleProvider } from './google-provider.js';
 export { CohereProvider } from './cohere-provider.js';
 export { OllamaProvider } from './ollama-provider.js';
 export { RuVectorProvider } from './ruvector-provider.js';
+export { DeepSeekProvider } from './deepseek-provider.js';
+export { OpenAICompatProvider } from './openai-compat-provider.js';
+export type { OpenAICompatConfig } from './openai-compat-provider.js';
+export { QwenProvider } from './qwen-provider.js';
+export { KimiProvider } from './kimi-provider.js';
+export { ZhipuProvider } from './zhipu-provider.js';
+export { DoubaoProvider } from './doubao-provider.js';
 
 // Export provider manager
 export { ProviderManager, createProviderManager } from './provider-manager.js';
