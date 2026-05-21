@@ -36,7 +36,7 @@ function memoryStore(key, value) {
     const r = spawnSync('npx', [
       CLI_PKG, 'memory', 'store',
       '--namespace', NS, '--key', stamped, '--value', JSON.stringify(value),
-    ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+    ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', shell: process.platform === 'win32' });
     if (r.status !== 0) throw new Error(`memory store failed: ${r.stderr?.slice(0, 200) || r.status}`);
     // The "current pointer" is found at retrieval time by listing all
     // budget-config-* keys and picking the lexicographically-largest
@@ -46,7 +46,7 @@ function memoryStore(key, value) {
   const r = spawnSync('npx', [
     CLI_PKG, 'memory', 'store',
     '--namespace', NS, '--key', key, '--value', JSON.stringify(value),
-  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', shell: process.platform === 'win32' });
   if (r.status !== 0) throw new Error(`memory store failed: ${r.stderr?.slice(0, 200) || r.status}`);
 }
 
@@ -54,7 +54,7 @@ function memoryRetrieveOne(key) {
   const r = spawnSync('npx', [
     CLI_PKG, 'memory', 'retrieve',
     '--namespace', NS, '--key', key,
-  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', shell: process.platform === 'win32' });
   if (r.status !== 0) return null;
   const m = /\{[\s\S]*\}/.exec(r.stdout || '');
   if (!m) return null;
@@ -67,7 +67,7 @@ function memoryRetrieve(key) {
     const list = spawnSync('npx', [
       CLI_PKG, 'memory', 'list',
       '--namespace', NS, '--format', 'json',
-    ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+    ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', shell: process.platform === 'win32' });
     if (list.status !== 0) return null;
     const m = /\[[\s\S]*\]/.exec(list.stdout || '');
     if (!m) return null;
@@ -92,7 +92,7 @@ function memoryListSessionRecords() {
   const r = spawnSync('npx', [
     CLI_PKG, 'memory', 'list',
     '--namespace', NS, '--format', 'json',
-  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8' });
+  ], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', shell: process.platform === 'win32' });
   if (r.status !== 0) return [];
   // CLI may emit a small banner before the JSON array; extract the first '['..']' block.
   const m = /\[[\s\S]*\]/.exec(r.stdout || '');

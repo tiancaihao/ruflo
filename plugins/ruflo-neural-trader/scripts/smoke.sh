@@ -17,9 +17,9 @@ if [[ "$v" != "0.2.0" ]]; then bad "expected 0.2.0, got '$v'"; else
   [[ -z "$miss" ]] && ok || bad "missing keywords:$miss"
 fi
 
-step "2. all 7 skills present with valid frontmatter (6 base + trader-cloud-backtest, ADR-117)"
+step "2. all 9 skills present with valid frontmatter (6 base + trader-cloud-backtest ADR-117 + trader-portfolio-cg ADR-126 Phase 3 + trader-explain ADR-126 Phase 6)"
 miss=""
-for s in trader-backtest trader-portfolio trader-regime trader-risk trader-signal trader-train trader-cloud-backtest; do
+for s in trader-backtest trader-portfolio trader-regime trader-risk trader-signal trader-train trader-cloud-backtest trader-portfolio-cg trader-explain; do
   f="$ROOT/skills/$s/SKILL.md"
   [[ -f "$f" ]] || { miss="$miss missing-$s"; continue; }
   for k in 'name:' 'description:' 'allowed-tools:'; do
@@ -54,10 +54,10 @@ grep -q "ruflo-agentdb" "$ROOT/README.md" \
   && grep -q "Namespace convention" "$ROOT/README.md" \
   && ok || bad "namespace coordination block incomplete"
 
-step "8. all 4 namespaces claimed (trading-strategies/-backtests/-risk/-analysis)"
+step "8. all 5 canonical namespaces claimed (trading-strategies/-backtests/-risk/-analysis/-signals per ADR-126)"
 F="$ROOT/README.md"
 miss=""
-for ns in trading-strategies trading-backtests trading-risk trading-analysis; do
+for ns in trading-strategies trading-backtests trading-risk trading-analysis trading-signals; do
   grep -q "$ns" "$F" || miss="$miss $ns"
 done
 [[ -z "$miss" ]] && ok || bad "missing namespace claims:$miss"

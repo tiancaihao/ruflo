@@ -2490,6 +2490,8 @@ export async function listEntries(options: {
   limit?: number;
   offset?: number;
   dbPath?: string;
+  /** #2073: When true, include the entry's full `content` string in each result. */
+  includeContent?: boolean;
 }): Promise<{
   success: boolean;
   entries: {
@@ -2501,6 +2503,8 @@ export async function listEntries(options: {
     createdAt: string;
     updatedAt: string;
     hasEmbedding: boolean;
+    /** #2073: Present when `includeContent: true` was requested. */
+    content?: string;
   }[];
   total: number;
   error?: string;
@@ -2578,6 +2582,7 @@ export async function listEntries(options: {
       createdAt: string;
       updatedAt: string;
       hasEmbedding: boolean;
+      content?: string;
     }[] = [];
 
     if (result[0]?.values) {
@@ -2585,8 +2590,20 @@ export async function listEntries(options: {
         const [id, key, ns, content, embedding, accessCount, createdAt, updatedAt] = row as [
           string, string, string, string, string | null, number, string, string
         ];
-        entries.push({
-          id: String(id).substring(0, 20),
+        const entry: {
+          id: string;
+          key: string;
+          namespace: string;
+          size: number;
+          accessCount: number;
+          createdAt: string;
+          updatedAt: string;
+          hasEmbedding: boolean;
+          content?: string;
+        } = {
+          // #2073: don't truncate id when content is requested — callers
+          // (notably memory_export) need the full id to round-trip via import.
+          id: options.includeContent ? String(id) : String(id).substring(0, 20),
           key: key || String(id).substring(0, 15),
           namespace: ns || 'default',
           size: (content || '').length,
@@ -2594,7 +2611,11 @@ export async function listEntries(options: {
           createdAt: createdAt || new Date().toISOString(),
           updatedAt: updatedAt || new Date().toISOString(),
           hasEmbedding: !!embedding && embedding.length > 10
-        });
+        };
+        if (options.includeContent) {
+          entry.content = content || '';
+        }
+        entries.push(entry);
       }
     }
 

@@ -791,6 +791,8 @@ export async function bridgeListEntries(options: {
   limit?: number;
   offset?: number;
   dbPath?: string;
+  /** #2073: When true, include the entry's full `content` string in each result. */
+  includeContent?: boolean;
 }): Promise<{
   success: boolean;
   entries: {
@@ -802,6 +804,8 @@ export async function bridgeListEntries(options: {
     createdAt: string;
     updatedAt: string;
     hasEmbedding: boolean;
+    /** #2073: Present when `includeContent: true` was requested. */
+    content?: string;
   }[];
   total: number;
   error?: string;
@@ -842,8 +846,10 @@ export async function bridgeListEntries(options: {
       `);
       const rows = stmt.all(...nsParams, limit, offset);
       for (const row of rows) {
-        entries.push({
-          id: String(row.id).substring(0, 20),
+        const entry: Record<string, unknown> = {
+          // #2073: don't truncate id when content is requested — callers
+          // (notably memory_export) need the full id to round-trip via import.
+          id: options.includeContent ? String(row.id) : String(row.id).substring(0, 20),
           key: row.key || String(row.id).substring(0, 15),
           namespace: row.namespace || 'default',
           size: (row.content || '').length,
@@ -851,7 +857,11 @@ export async function bridgeListEntries(options: {
           createdAt: row.created_at || new Date().toISOString(),
           updatedAt: row.updated_at || new Date().toISOString(),
           hasEmbedding: !!(row.embedding && String(row.embedding).length > 10),
-        });
+        };
+        if (options.includeContent) {
+          entry.content = row.content || '';
+        }
+        entries.push(entry);
       }
     } catch {
       return null;

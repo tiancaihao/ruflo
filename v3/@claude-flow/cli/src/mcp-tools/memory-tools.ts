@@ -1197,14 +1197,23 @@ export const memoryTools: MCPTool[] = [
       if (!outputPath) return { error: 'outputPath is required' };
       const namespace = input.namespace ? String(input.namespace) : undefined;
       if (namespace) { const v = validateIdentifier(namespace, 'namespace'); if (!v.valid) throw new Error(v.error); }
-      const all = await listEntries({ limit: 100000, namespace });
+      // #2073: pass includeContent so the value field carries the actual
+      // entry body. Without this, `value` is always null because listEntries
+      // strips content by default (callers pay for the JSON parse only when
+      // they need it).
+      const all = await listEntries({ limit: 100000, namespace, includeContent: true });
       const payload = {
         schema: 'ruflo-memory-export/v1',
         exportedAt: new Date().toISOString(),
         namespace: namespace ?? null,
         count: all.entries.length,
         entries: all.entries.map(e => ({
-          key: e.key, namespace: e.namespace, value: (e as { value?: unknown }).value ?? null,
+          key: e.key,
+          namespace: e.namespace,
+          // #2073: `e.content` is the stored value string; `e.value` was a
+          // never-populated alias. Fall back to null only if content is
+          // missing for backward-compat with the schema.
+          value: typeof e.content === 'string' ? e.content : ((e as { value?: unknown }).value ?? null),
           createdAt: e.createdAt, updatedAt: e.updatedAt, accessCount: e.accessCount, hasEmbedding: e.hasEmbedding, size: e.size,
         })),
       };
