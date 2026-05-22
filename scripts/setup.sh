@@ -37,8 +37,8 @@ info "Starting multi-provider setup..."
 
 # Step 1: Ensure npx can fetch the latest ruflo
 info "Downloading ruflo@latest via npx (this primes the cache)..."
-npx -y ruflo@latest --help > /dev/null 2>&1 || {
-    warn "ruflo --help exited non-zero (may be normal for some versions). Continuing..."
+npx -y ruflo@latest --version > /dev/null 2>&1 || {
+    warn "ruflo --version exited non-zero (may be normal for some versions). Continuing..."
 }
 
 # Step 2: Locate the npx cache directory containing agent-execute-core.js
@@ -48,30 +48,25 @@ TARGET_FILE=$(find ~/.npm/_npx -path "*/@claude-flow/cli/dist/src/mcp-tools/agen
 if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
     err "Could not find agent-execute-core.js in any npx cache."
     err "Make sure ruflo has been cached by npx. Try running:"
-    err "  npx -y ruflo@latest --help"
+    err "  npx -y ruflo@latest --version"
     exit 1
 fi
 
 info "Found target: $TARGET_FILE"
 
-# Step 3: Check if already patched
+# Step 3: Check if L1 patch already applied
+L1_PATCHED=false
 if grep -q "OPENAI_COMPAT_PROVIDERS" "$TARGET_FILE" 2>/dev/null; then
-    ok "Multi-provider routing is already installed."
-    echo ""
-    info "Next steps:"
-    echo "  1. Set one of these env vars in .claude/settings.json:"
-    echo "     DEEPSEEK_API_KEY, DASHSCOPE_API_KEY, MOONSHOT_API_KEY,"
-    echo "     ZHIPU_API_KEY, ARK_API_KEY"
-    echo "  2. Restart Claude Code"
-    echo ""
-    info "Setup complete."
-    exit 0
+    ok "Multi-provider routing (L1) is already installed."
+    L1_PATCHED=true
 fi
 
-# Step 4: Create backup
-BACKUP="$TARGET_FILE.bak.$(date +%s)"
-cp "$TARGET_FILE" "$BACKUP"
-info "Backup created at $BACKUP"
+# Step 4-6: Apply L1 multi-provider patch (skip if already done)
+if [ "$L1_PATCHED" = false ]; then
+    # Step 4: Create backup
+    BACKUP="$TARGET_FILE.bak.$(date +%s)"
+    cp "$TARGET_FILE" "$BACKUP"
+    info "Backup created at $BACKUP"
 
 # Step 5: Apply the multi-provider patch via node (temp file to avoid escaping hell)
 info "Patching agent-execute-core.js with multi-provider routing..."
@@ -277,25 +272,171 @@ if [ $PATCH_EXIT -ne 0 ]; then
     exit 1
 fi
 
-# Step 6: Verify the patch
+# Step 6: Verify the L1 multi-provider patch
 if grep -q "OPENAI_COMPAT_PROVIDERS" "$TARGET_FILE"; then
-    ok "Multi-provider routing installed successfully!"
-    echo ""
-    info "Next steps:"
-    echo "  1. Set one of these env vars in .claude/settings.json under the MCP server config:"
-    echo "     DEEPSEEK_API_KEY  → DeepSeek (Anthropic-compatible, highest priority)"
-    echo "     DASHSCOPE_API_KEY → Qwen / DashScope (Alibaba)"
-    echo "     MOONSHOT_API_KEY  → Kimi / Moonshot"
-    echo "     ZHIPU_API_KEY     → Zhipu / BigModel"
-    echo "     ARK_API_KEY       → Doubao / Ark (ByteDance)"
-    echo "  2. Or add them to the \"env\" block of your MCP server in .claude/settings.json"
-    echo "  3. Restart Claude Code (or reload the MCP server)"
-    echo "  4. Test: spawn an agent — it should auto-route to your provider"
-    echo ""
-    info "Setup complete. Set your API key and restart Claude Code."
+    ok "Multi-provider routing (L1) installed successfully!"
 else
     err "Patch verification failed. Restoring backup..."
     cp "$BACKUP" "$TARGET_FILE"
     err "Original file restored. No changes were made."
     exit 1
 fi
+fi  # End of L1 patch block
+
+# =============================================================================
+# Step 7: Layer 2 fix — Patch agent-wasm.js to allow DEEPSEEK_API_KEY
+# =============================================================================
+BASE_DIR=$(dirname "$TARGET_FILE")                    # .../mcp-tools/
+DIST_DIR=$(dirname "$BASE_DIR")                       # .../dist/src/
+WASM_FILE="$DIST_DIR/ruvector/agent-wasm.js"
+
+if [ -f "$WASM_FILE" ]; then
+    WASM_BACKUP="$WASM_FILE.bak.$(date +%s)"
+    cp "$WASM_FILE" "$WASM_BACKUP"
+    info "Layer 2 WASM Agent backup at $WASM_BACKUP"
+
+    PATCH_WASM=$(mktemp /tmp/ruflo-patch-wasm.XXXXXX.js)
+    cat << 'ENDOFWASM' > "$PATCH_WASM"
+const fs = require("fs");
+const target = process.argv[2];
+let code = fs.readFileSync(target, "utf-8");
+
+// Fix 1: ANTHROPIC_API_KEY check → also accept DEEPSEEK_API_KEY
+code = code.replace(
+  /if\s*\(!process\.env\.ANTHROPIC_API_KEY\)\s*\{/,
+  "if (!process.env.ANTHROPIC_API_KEY && !process.env.DEEPSEEK_API_KEY) {"
+);
+
+// Fix 2: Update error message to mention DeepSeek
+code = code.replace(
+  /'set ANTHROPIC_API_KEY to enable real responses via Anthropic Messages API'/,
+  "'set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY to enable real responses'"
+);
+
+fs.writeFileSync(target, code, "utf-8");
+ENDOFWASM
+
+    node "$PATCH_WASM" "$WASM_FILE"
+    WASM_EXIT=$?
+    rm -f "$PATCH_WASM"
+
+    if [ $WASM_EXIT -eq 0 ]; then
+        ok "Layer 2 WASM Agent patched — DEEPSEEK_API_KEY now accepted."
+    else
+        warn "Layer 2 patch failed (non-fatal). WASM agents will need ANTHROPIC_API_KEY."
+        cp "$WASM_BACKUP" "$WASM_FILE"
+    fi
+else
+    warn "agent-wasm.js not found at $WASM_FILE — skipping Layer 2 patch."
+fi
+
+# =============================================================================
+# Step 8: Copy local-agent-loop.js into npx cache
+# =============================================================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOOP_SRC="$SCRIPT_DIR/../src/local-agent-loop.js"
+if [ -f "$LOOP_SRC" ]; then
+    cp "$LOOP_SRC" "$BASE_DIR/local-agent-loop.js"
+    ok "local-agent-loop.js copied to npx cache."
+else
+    LOOP_SRC_ALT="$SCRIPT_DIR/local-agent-loop.js"
+    if [ -f "$LOOP_SRC_ALT" ]; then
+        cp "$LOOP_SRC_ALT" "$BASE_DIR/local-agent-loop.js"
+        ok "local-agent-loop.js copied to npx cache."
+    else
+        err "local-agent-loop.js not found at $LOOP_SRC. Make sure src/local-agent-loop.js exists."
+        exit 1
+    fi
+fi
+
+# =============================================================================
+# Step 9: Copy local-agent-tools.js into npx cache
+# =============================================================================
+TOOLS_SRC="$SCRIPT_DIR/../src/local-agent-tools.js"
+if [ -f "$TOOLS_SRC" ]; then
+    cp "$TOOLS_SRC" "$BASE_DIR/local-agent-tools.js"
+    ok "local-agent-tools.js copied to npx cache."
+else
+    TOOLS_SRC_ALT="$SCRIPT_DIR/local-agent-tools.js"
+    if [ -f "$TOOLS_SRC_ALT" ]; then
+        cp "$TOOLS_SRC_ALT" "$BASE_DIR/local-agent-tools.js"
+        ok "local-agent-tools.js copied to npx cache."
+    else
+        err "local-agent-tools.js not found at $TOOLS_SRC. Make sure src/local-agent-tools.js exists."
+        exit 1
+    fi
+fi
+
+# =============================================================================
+# Step 10: Register localAgentTools in mcp-tools/index.js
+# =============================================================================
+INDEX_FILE="$BASE_DIR/index.js"
+if [ -f "$INDEX_FILE" ]; then
+    INDEX_BACKUP="$INDEX_FILE.bak.$(date +%s)"
+    cp "$INDEX_FILE" "$INDEX_BACKUP"
+    info "MCP index backup at $INDEX_BACKUP"
+
+    # Check if already registered
+    if grep -q "localAgentTools" "$INDEX_FILE" 2>/dev/null; then
+        ok "localAgentTools already registered in mcp-tools/index.js."
+    else
+        PATCH_INDEX=$(mktemp /tmp/ruflo-patch-index.XXXXXX.js)
+        cat << 'ENDOFINDEX' > "$PATCH_INDEX"
+const fs = require("fs");
+const target = process.argv[2];
+let code = fs.readFileSync(target, "utf-8");
+
+// Add export for localAgentTools before the last export line
+code = code.replace(
+  /(export \{[^}]*\}\s*from\s*'\.\/autopilot-tools\.js';)/,
+  "$1\n" + "export { localAgentTools } from './local-agent-tools.js';"
+);
+
+fs.writeFileSync(target, code, "utf-8");
+ENDOFINDEX
+
+        node "$PATCH_INDEX" "$INDEX_FILE"
+        INDEX_EXIT=$?
+        rm -f "$PATCH_INDEX"
+
+        if [ $INDEX_EXIT -eq 0 ] && grep -q "localAgentTools" "$INDEX_FILE"; then
+            ok "localAgentTools registered in mcp-tools/index.js."
+        else
+            warn "Failed to register localAgentTools (non-fatal). Manual registration may be needed."
+            cp "$INDEX_BACKUP" "$INDEX_FILE"
+        fi
+    fi
+else
+    warn "mcp-tools/index.js not found — skipping tool registration."
+fi
+
+# =============================================================================
+# Step 11: Final verification
+# =============================================================================
+echo ""
+ok "Ruflo multi-provider setup complete!"
+echo ""
+info "What was installed:"
+echo "  L1: agent_execute → multi-provider routing (DeepSeek, Qwen, Kimi, Zhipu, Doubao)"
+echo "  L2: wasm_agent_*  → DEEPSEEK_API_KEY accepted (no longer Anthropic-only)"
+echo "  L3: local_agent_* → Local agent loop via DeepSeek/Qwen function calling"
+echo ""
+info "Tools available:"
+echo "  local_agent_create     — Create a new local agent"
+echo "  local_agent_prompt     — Run a task (supports async: true)"
+echo "  local_agent_status     — Check progress"
+echo "  local_agent_events     — View full transcript"
+echo "  local_agent_list       — List all local agents"
+echo "  local_agent_terminate  — Stop and clean up"
+echo ""
+info "Next steps:"
+echo "  1. Set one of these env vars in .claude/settings.json under the MCP server config:"
+echo "     DEEPSEEK_API_KEY  → DeepSeek (highest priority)"
+echo "     DASHSCOPE_API_KEY → Qwen / DashScope (Alibaba)"
+echo "     MOONSHOT_API_KEY  → Kimi / Moonshot"
+echo "     ZHIPU_API_KEY     → Zhipu / BigModel"
+echo "     ARK_API_KEY       → Doubao / Ark (ByteDance)"
+echo "  2. Optional: MAX_CONCURRENT_LOCAL_AGENTS=5 (default: 3)"
+echo "  3. Restart Claude Code (or reload the MCP server)"
+echo "  4. Test: spawn a local agent with local_agent_create"
+echo ""
