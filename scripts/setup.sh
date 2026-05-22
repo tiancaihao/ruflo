@@ -9,11 +9,14 @@ set -euo pipefail
 # agent-execute-core.js with multi-provider LLM routing so you can
 # use DeepSeek, Qwen, Kimi, Zhipu, or Doubao instead of Anthropic.
 #
+# Also adds local_agent_* MCP tools (L3 local agent loop) and fixes
+# the Layer 2 WASM Agent ANTHROPIC_API_KEY pre-check.
+#
 # Usage:
-#   ./scripts/setup.sh
+#   curl -fsSL https://raw.githubusercontent.com/tiancaihao/ruflo/main/scripts/setup.sh | bash
 #
 # After setup, set ONE of these env vars in .claude/settings.json:
-#   DEEPSEEK_API_KEY  (DeepSeek — Anthropic-compatible, highest priority)
+#   DEEPSEEK_API_KEY  (DeepSeek — highest priority)
 #   DASHSCOPE_API_KEY (Qwen / DashScope)
 #   MOONSHOT_API_KEY  (Kimi / Moonshot)
 #   ZHIPU_API_KEY     (Zhipu / BigModel)
@@ -32,6 +35,9 @@ info()  { echo -e "${CYAN}[ruflo-setup]${NC} $*"; }
 ok()    { echo -e "${GREEN}[ruflo-setup]${NC} ✓ $*"; }
 warn()  { echo -e "${YELLOW}[ruflo-setup]${NC} ⚠ $*"; }
 err()   { echo -e "${RED}[ruflo-setup]${NC} ✗ $*"; }
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_RAW="https://raw.githubusercontent.com/tiancaihao/ruflo/main"
 
 info "Starting multi-provider setup..."
 
@@ -331,41 +337,49 @@ else
 fi
 
 # =============================================================================
-# Step 8: Copy local-agent-loop.js into npx cache
+# Step 8: Download & copy local-agent-loop.js into npx cache
 # =============================================================================
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOOP_SRC="$SCRIPT_DIR/../src/local-agent-loop.js"
-if [ -f "$LOOP_SRC" ]; then
-    cp "$LOOP_SRC" "$BASE_DIR/local-agent-loop.js"
-    ok "local-agent-loop.js copied to npx cache."
+LOOP_TMP=$(mktemp /tmp/local-agent-loop.XXXXXX.js)
+
+# Try local first (dev mode), then GitHub raw (curl-pipe-bash mode)
+if [ -f "$SCRIPT_DIR/../src/local-agent-loop.js" ]; then
+    cp "$SCRIPT_DIR/../src/local-agent-loop.js" "$LOOP_TMP"
+elif [ -f "$SCRIPT_DIR/local-agent-loop.js" ]; then
+    cp "$SCRIPT_DIR/local-agent-loop.js" "$LOOP_TMP"
 else
-    LOOP_SRC_ALT="$SCRIPT_DIR/local-agent-loop.js"
-    if [ -f "$LOOP_SRC_ALT" ]; then
-        cp "$LOOP_SRC_ALT" "$BASE_DIR/local-agent-loop.js"
-        ok "local-agent-loop.js copied to npx cache."
-    else
-        err "local-agent-loop.js not found at $LOOP_SRC. Make sure src/local-agent-loop.js exists."
+    info "Downloading local-agent-loop.js from GitHub..."
+    curl -fsSL "$REPO_RAW/src/local-agent-loop.js" -o "$LOOP_TMP" || {
+        err "Failed to download local-agent-loop.js. Check your network."
+        rm -f "$LOOP_TMP"
         exit 1
-    fi
+    }
 fi
 
+cp "$LOOP_TMP" "$BASE_DIR/local-agent-loop.js"
+ok "local-agent-loop.js installed."
+rm -f "$LOOP_TMP"
+
 # =============================================================================
-# Step 9: Copy local-agent-tools.js into npx cache
+# Step 9: Download & copy local-agent-tools.js into npx cache
 # =============================================================================
-TOOLS_SRC="$SCRIPT_DIR/../src/local-agent-tools.js"
-if [ -f "$TOOLS_SRC" ]; then
-    cp "$TOOLS_SRC" "$BASE_DIR/local-agent-tools.js"
-    ok "local-agent-tools.js copied to npx cache."
+TOOLS_TMP=$(mktemp /tmp/local-agent-tools.XXXXXX.js)
+
+if [ -f "$SCRIPT_DIR/../src/local-agent-tools.js" ]; then
+    cp "$SCRIPT_DIR/../src/local-agent-tools.js" "$TOOLS_TMP"
+elif [ -f "$SCRIPT_DIR/local-agent-tools.js" ]; then
+    cp "$SCRIPT_DIR/local-agent-tools.js" "$TOOLS_TMP"
 else
-    TOOLS_SRC_ALT="$SCRIPT_DIR/local-agent-tools.js"
-    if [ -f "$TOOLS_SRC_ALT" ]; then
-        cp "$TOOLS_SRC_ALT" "$BASE_DIR/local-agent-tools.js"
-        ok "local-agent-tools.js copied to npx cache."
-    else
-        err "local-agent-tools.js not found at $TOOLS_SRC. Make sure src/local-agent-tools.js exists."
+    info "Downloading local-agent-tools.js from GitHub..."
+    curl -fsSL "$REPO_RAW/src/local-agent-tools.js" -o "$TOOLS_TMP" || {
+        err "Failed to download local-agent-tools.js. Check your network."
+        rm -f "$TOOLS_TMP"
         exit 1
-    fi
+    }
 fi
+
+cp "$TOOLS_TMP" "$BASE_DIR/local-agent-tools.js"
+ok "local-agent-tools.js installed."
+rm -f "$TOOLS_TMP"
 
 # =============================================================================
 # Step 10: Register localAgentTools in mcp-tools/index.js
@@ -438,5 +452,8 @@ echo "     ZHIPU_API_KEY     → Zhipu / BigModel"
 echo "     ARK_API_KEY       → Doubao / Ark (ByteDance)"
 echo "  2. Optional: MAX_CONCURRENT_LOCAL_AGENTS=5 (default: 3)"
 echo "  3. Restart Claude Code (or reload the MCP server)"
-echo "  4. Test: spawn a local agent with local_agent_create"
+echo "  4. Test: local_agent_create + local_agent_prompt"
+echo ""
+info "One-liner for new users:"
+echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
 echo ""
