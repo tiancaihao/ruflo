@@ -475,9 +475,16 @@ print_manual_guide() {
 # ---- TTY detection: skip interactive menu in non-TTY (pipe, CI) ----
 if [ -t 0 ]; then
   echo ""
-  info "Let's configure your LLM provider API key now."
+  echo "  ╔══════════════════════════════════════════════════╗"
+  echo "  ║     API Provider Configuration Wizard           ║"
+  echo "  ╚══════════════════════════════════════════════════╝"
+  echo ""
 
-  PS3="Enter number (1-${#PROVIDER_NAMES[@]}, or $(( ${#PROVIDER_NAMES[@]} + 1 )) to skip): "
+  # ---- Step 1: Select provider ----
+  info "(1/3) Select your LLM provider:"
+  echo ""
+
+  PS3="  Enter number (1-${#PROVIDER_NAMES[@]}, or $(( ${#PROVIDER_NAMES[@]} + 1 )) to skip): "
 
   select PROVIDER_CHOICE in "${PROVIDER_NAMES[@]}" "Skip — I'll configure later"; do
     if [ -n "$PROVIDER_CHOICE" ]; then
@@ -508,15 +515,15 @@ if [ -t 0 ]; then
   TEST_URL="${PROVIDER_URLS[$IDX]}"
   DEFAULT_MODEL="${PROVIDER_MODELS[$IDX]}"
 
+  echo ""
+  info "(2/3) Enter your API key for $PROVIDER_CHOICE"
+
   ATTEMPTS=0
   MAX_ATTEMPTS=3
 
   while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
     echo ""
-    info "Provider: $PROVIDER_CHOICE"
-    info "Required env var: $ENV_VAR"
-    echo ""
-    read -s -p "Enter your API key (input hidden, press Enter when done): " APIKEY
+    read -s -p "  API key (input hidden): " APIKEY
     echo ""
 
     if [ -z "$APIKEY" ]; then
@@ -529,8 +536,17 @@ if [ -t 0 ]; then
       continue
     fi
 
+    # Show masked key for confirmation
+    KEYLEN=${#APIKEY}
+    if [ $KEYLEN -le 8 ]; then
+      MASKED="****"
+    else
+      MASKED="${APIKEY:0:4}...${APIKEY: -4}"
+    fi
+    info "Key entered: $MASKED  (env var: $ENV_VAR)"
+
     echo ""
-    info "Testing connectivity to $PROVIDER_CHOICE..."
+    info "(3/3) Testing connectivity to $PROVIDER_CHOICE..."
     HTTP_CODE=$(test_connectivity "$TEST_URL" "$APIKEY")
 
     if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 300 ] 2>/dev/null; then
@@ -596,7 +612,7 @@ ENDMCPPATCH
         rm -f "$MCP_PATCH"
 
         if [ $PATCH_EXIT -eq 0 ]; then
-          ok "API key saved to $CLAUDE_JSON → mcpServers.claude-flow.env.$ENV_VAR"
+          ok "API key saved to MCP server config."
         else
           warn "Could not auto-save API key to MCP config."
           info "Add this manually to ~/.claude.json under mcpServers.claude-flow.env:"
@@ -607,12 +623,23 @@ ENDMCPPATCH
         echo "    export $ENV_VAR=\"<your-api-key>\""
       fi
 
+      # ---- Doctor summary ----
       echo ""
-      ok "=== Setup complete! ==="
+      echo "  ╔══════════════════════════════════════════════════╗"
+      echo "  ║     Configuration Complete — Summary             ║"
+      echo "  ╚══════════════════════════════════════════════════╝"
       echo ""
-      info "Default model for this provider: $DEFAULT_MODEL"
-      info "Restart Claude Code (or reload the MCP server), then test with:"
-      echo "  local_agent_create + local_agent_prompt"
+      echo "    Provider:       $PROVIDER_CHOICE"
+      echo "    API key:        $MASKED  ✓ verified"
+      echo "    Default model:  $DEFAULT_MODEL"
+      echo "    Env var:        $ENV_VAR"
+      if [ -f "$CLAUDE_JSON" ] && [ $PATCH_EXIT -eq 0 ]; then
+        echo "    Config file:    $CLAUDE_JSON"
+        echo "    MCP server:     claude-flow"
+      fi
+      echo ""
+      info "Next: Restart Claude Code, then test with:"
+      echo "  local_agent_create → local_agent_prompt"
       echo ""
       exit 0
     elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
