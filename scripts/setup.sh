@@ -452,6 +452,107 @@ PROVIDER_VARS=("DEEPSEEK_API_KEY" "DASHSCOPE_API_KEY" "MOONSHOT_API_KEY" "ZHIPU_
 PROVIDER_URLS=("https://api.deepseek.com/v1/models" "https://dashscope.aliyuncs.com/api/v1/models" "https://api.moonshot.cn/v1/models" "https://open.bigmodel.cn/api/paas/v4/models" "https://ark.cn-beijing.volces.com/api/v3/models")
 PROVIDER_MODELS=("deepseek-v4-flash" "qwen3.6-plus" "kimi-k2.5" "glm-4.6" "doubao-seed-1.6")
 
+# Node.js-powered interactive select (arrow-key navigation, Enter to confirm)
+# Usage: interactive_select "prompt message" "option1" "option2" ...
+# Returns: selected index (0-based) on stdout, 255 on cancel
+interactive_select() {
+  local prompt="$1"; shift
+  local opts=("$@")
+  local script
+  script=$(mktemp /tmp/ruflo-select.XXXXXX.js)
+
+  cat << 'SELECTJS' > "$script"
+const readline = require('readline');
+const opts = process.argv.slice(1);
+
+function select(opts) {
+  return new Promise((resolve) => {
+    let idx = 0;
+    const len = opts.length;
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true
+    });
+
+    process.stdin.setRawMode(true);
+    readline.emitKeypressEvents(process.stdin);
+
+    function render() {
+      // Move to start of list, clear below
+      for (let i = 0; i < len; i++) {
+        process.stdout.write('\x1b[2K'); // clear line
+        if (i === idx) {
+          process.stdout.write('\x1b[36m❯ ' + opts[i] + '\x1b[0m\n');
+        } else {
+          process.stdout.write('  ' + opts[i] + '\n');
+        }
+      }
+      // Move cursor back up to first line
+      if (len > 0) process.stdout.write('\x1b[' + len + 'A');
+    }
+
+    render();
+
+    const onKey = (str, key) => {
+      if (key.name === 'up') {
+        idx = (idx - 1 + len) % len;
+        render();
+      } else if (key.name === 'down') {
+        idx = (idx + 1) % len;
+        render();
+      } else if (key.name === 'return' || key.name === 'enter') {
+        cleanup();
+        resolve(idx);
+      } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+        cleanup();
+        resolve(-1);
+      }
+    };
+
+    function cleanup() {
+      process.stdout.write('\x1b[' + len + 'B'); // move to end
+      process.stdout.write('\x1b[?25h'); // show cursor
+      process.stdin.setRawMode(false);
+      process.stdin.removeListener('keypress', onKey);
+      rl.close();
+    }
+
+    process.stdin.on('keypress', onKey);
+    process.stdout.write('\x1b[?25l'); // hide cursor
+  });
+}
+
+select(opts).then(idx => {
+  process.stdout.write(idx.toString());
+  process.exit(0);
+}).catch(() => {
+  process.stdout.write('-1');
+  process.exit(1);
+});
+SELECTJS
+
+  local result
+  result=$(node "$script" "${opts[@]}" </dev/tty 2>/dev/null)
+  local rc=$?
+  rm -f "$script"
+  if [ $rc -ne 0 ] || [ "$result" = "-1" ]; then
+    return 255
+  fi
+  echo "$result"
+  return 0
+}
+
+# Simple yes/no prompt using the same pattern
+# Usage: confirm "question?" → returns 0 for yes, 1 for no
+confirm() {
+  local prompt="$1"
+  local result
+  result=$(interactive_select "$prompt" "Yes" "No" 2>/dev/null)
+  [ "$result" = "0" ] && return 0 || return 1
+}
+
 test_connectivity() {
   local url="$1" apikey="$2"
   curl -s -o /dev/null -w "%{http_code}" -X GET "$url" \
@@ -480,20 +581,17 @@ if [ -t 0 ]; then
   echo "  ╚══════════════════════════════════════════════════╝"
   echo ""
 
-  # ---- Step 1: Select provider ----
-  info "(1/3) Select your LLM provider:"
+  # ---- Step 1: Select provider (arrow keys ↑↓, Enter to confirm) ----
+  info "(1/3) Use ↑↓ to select your LLM provider, Enter to confirm:"
   echo ""
 
-  PS3="  Enter number (1-${#PROVIDER_NAMES[@]}, or $(( ${#PROVIDER_NAMES[@]} + 1 )) to skip): "
+  CHOICE_IDX=$(interactive_select "Select provider" "${PROVIDER_NAMES[@]}" "Skip — I'll configure later")
+  CHOICE_RC=$?
 
-  select PROVIDER_CHOICE in "${PROVIDER_NAMES[@]}" "Skip — I'll configure later"; do
-    if [ -n "$PROVIDER_CHOICE" ]; then
-      break
-    fi
-    echo "Invalid selection. Please enter a number from 1 to $(( ${#PROVIDER_NAMES[@]} + 1 ))."
-  done
-
-  if [ "$PROVIDER_CHOICE" = "Skip — I'll configure later" ]; then
+  # Build a clean display of what was selected
+  if [ $CHOICE_RC -eq 255 ] || [ "$CHOICE_IDX" = "-1" ] || [ "$CHOICE_IDX" -ge "${#PROVIDER_NAMES[@]}" ]; then
+    echo ""
+    info "Skipping API key configuration."
     print_manual_guide
     echo ""
     info "One-liner for new users:"
@@ -502,20 +600,17 @@ if [ -t 0 ]; then
     exit 0
   fi
 
-  # Resolve selected index
-  IDX=-1
-  for i in "${!PROVIDER_NAMES[@]}"; do
-    if [ "${PROVIDER_NAMES[$i]}" = "$PROVIDER_CHOICE" ]; then
-      IDX=$i
-      break
-    fi
-  done
-
+  IDX="$CHOICE_IDX"
+  PROVIDER_CHOICE="${PROVIDER_NAMES[$IDX]}"
   ENV_VAR="${PROVIDER_VARS[$IDX]}"
   TEST_URL="${PROVIDER_URLS[$IDX]}"
   DEFAULT_MODEL="${PROVIDER_MODELS[$IDX]}"
 
   echo ""
+  echo "  Selected: $PROVIDER_CHOICE"
+  echo ""
+
+  # ---- Step 2: Enter API key ----
   info "(2/3) Enter your API key for $PROVIDER_CHOICE"
 
   ATTEMPTS=0
@@ -645,24 +740,32 @@ ENDMCPPATCH
     elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
       warn "API key rejected (HTTP $HTTP_CODE). Check that your key is correct and not expired."
       ATTEMPTS=$((ATTEMPTS + 1))
-      REMAINING=$((MAX_ATTEMPTS - ATTEMPTS))
-      if [ $REMAINING -gt 0 ]; then
-        info "Remaining attempts: $REMAINING"
-      fi
     elif [ "$HTTP_CODE" = "000" ] || [ -z "$HTTP_CODE" ]; then
       warn "Network error: unable to reach the API endpoint. Check your internet connection."
       ATTEMPTS=$((ATTEMPTS + 1))
-      REMAINING=$((MAX_ATTEMPTS - ATTEMPTS))
-      if [ $REMAINING -gt 0 ]; then
-        info "Remaining attempts: $REMAINING"
-      fi
     else
       warn "Unexpected response (HTTP $HTTP_CODE). The API may be temporarily unavailable."
       ATTEMPTS=$((ATTEMPTS + 1))
-      REMAINING=$((MAX_ATTEMPTS - ATTEMPTS))
-      if [ $REMAINING -gt 0 ]; then
-        info "Remaining attempts: $REMAINING"
+    fi
+
+    # Offer retry/skip if attempts remain
+    if [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; then
+      echo ""
+      info "Attempt $ATTEMPTS of $MAX_ATTEMPTS failed. What would you like to do?"
+      echo ""
+      RETRY_IDX=$(interactive_select "Select action" "Try again" "Skip — configure later")
+      if [ "$RETRY_IDX" != "0" ]; then
+        echo ""
+        info "Skipping API key configuration."
+        print_manual_guide
+        echo ""
+        info "One-liner for new users:"
+        echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
+        echo ""
+        exit 0
       fi
+      echo ""
+      info "Let's try again. (2/3) Enter your API key for $PROVIDER_CHOICE"
     fi
   done
 
