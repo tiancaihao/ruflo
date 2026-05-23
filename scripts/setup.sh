@@ -41,7 +41,7 @@ REPO_RAW="https://raw.githubusercontent.com/tiancaihao/ruflo/main"
 
 info "Starting multi-provider setup..."
 
-# Search for agent-execute-core.js across npx cache, global npm, and nvm
+# Search for agent-execute-core.js, prefer shallowest path (avoids nested node_modules copies)
 find_target_file() {
   for search_dir in \
     ~/.npm/_npx \
@@ -52,8 +52,10 @@ find_target_file() {
     [ -d "$search_dir" ] 2>/dev/null || continue
     find "$search_dir" -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null
   done | while read f; do
-    echo "$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null || echo 0) $f"
-  done | sort -rn | head -1 | awk '{print $2}'
+    # Sort by path depth (fewer slashes = shallower = higher priority)
+    depth=$(echo "$f" | tr -cd '/' | wc -c)
+    echo "$depth $f"
+  done | sort -n | head -1 | awk '{print $2}'
 }
 
 TARGET_FILE=$(find_target_file)
