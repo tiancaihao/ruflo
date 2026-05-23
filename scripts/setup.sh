@@ -728,10 +728,10 @@ if (existingCfg && existingCfg.env) {
 envVars[envVar] = apiKey;
 
 // Build bash -c with env vars + exec node to patched MCP server
-const exports = Object.entries(envVars)
+const envStr = Object.entries(envVars)
   .map(([k, v]) => k + "='" + v.replace(/'/g, "'\\''") + "'")
   .join(" ");
-const cmd = exports + " exec node " + mcpServer;
+const cmd = envStr + " exec node " + mcpServer;
 
 if (!serverName) {
   serverName = "claude-flow";
