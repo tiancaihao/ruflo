@@ -536,24 +536,83 @@ if [ -t 0 ]; then
     if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 300 ] 2>/dev/null; then
       ok "Connection successful! (HTTP $HTTP_CODE) — API key is valid."
       echo ""
+
+      # Persist the API key to Claude Code MCP server config
+      CLAUDE_JSON="$HOME/.claude.json"
+      if [ -f "$CLAUDE_JSON" ]; then
+        MCP_PATCH=$(mktemp /tmp/ruflo-mcp-env.XXXXXX.js)
+        cat << 'ENDMCPPATCH' > "$MCP_PATCH"
+const fs = require("fs");
+const path = require("path");
+const target = process.argv[2];
+const envVar = process.argv[3];
+const apiKey = process.argv[4];
+const model = process.argv[5];
+
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(target, "utf-8"));
+} catch (e) {
+  console.error("Failed to parse " + target + ": " + e.message);
+  process.exit(1);
+}
+
+if (!data.mcpServers) data.mcpServers = {};
+
+// Find any server that runs ruflo or claude-flow
+let serverName = null;
+for (const [name, cfg] of Object.entries(data.mcpServers)) {
+  const cmd = (cfg.command || "") + " " + (cfg.args || []).join(" ");
+  if (cmd.includes("ruflo") || cmd.includes("claude-flow") || name.includes("claude-flow") || name.includes("ruflo")) {
+    serverName = name;
+    break;
+  }
+}
+
+if (!serverName) {
+  // No existing ruflo server — create one
+  serverName = "claude-flow";
+  data.mcpServers[serverName] = {
+    command: "npx",
+    args: ["-y", "ruflo@latest", "mcp", "start"]
+  };
+}
+
+if (!data.mcpServers[serverName].env) {
+  data.mcpServers[serverName].env = {};
+}
+data.mcpServers[serverName].env[envVar] = apiKey;
+
+// Write atomically
+const tmpPath = target + ".tmp." + Date.now();
+fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+fs.renameSync(tmpPath, target);
+
+console.log("Written " + envVar + " to MCP server '" + serverName + "'");
+ENDMCPPATCH
+
+        node "$MCP_PATCH" "$CLAUDE_JSON" "$ENV_VAR" "$APIKEY" "$DEFAULT_MODEL"
+        PATCH_EXIT=$?
+        rm -f "$MCP_PATCH"
+
+        if [ $PATCH_EXIT -eq 0 ]; then
+          ok "API key saved to $CLAUDE_JSON → mcpServers.claude-flow.env.$ENV_VAR"
+        else
+          warn "Could not auto-save API key to MCP config."
+          info "Add this manually to ~/.claude.json under mcpServers.claude-flow.env:"
+          echo "    \"$ENV_VAR\": \"<your-api-key>\""
+        fi
+      else
+        info "~/.claude.json not found. Set the env var manually:"
+        echo "    export $ENV_VAR=\"<your-api-key>\""
+      fi
+
+      echo ""
       ok "=== Setup complete! ==="
-      echo ""
-      info "To use this key in your current terminal, run:"
-      echo ""
-      echo "    export $ENV_VAR=\"\$YOUR_API_KEY\""
-      echo ""
-      info "Or add to .claude/settings.json MCP server env config:"
-      echo ""
-      echo '    "env": {'
-      echo "      \"$ENV_VAR\": \"<your-api-key>\""
-      echo '    }'
       echo ""
       info "Default model for this provider: $DEFAULT_MODEL"
       info "Restart Claude Code (or reload the MCP server), then test with:"
       echo "  local_agent_create + local_agent_prompt"
-      echo ""
-      info "One-liner for new users:"
-      echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
       echo ""
       exit 0
     elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
