@@ -443,17 +443,157 @@ echo "  local_agent_events     — View full transcript"
 echo "  local_agent_list       — List all local agents"
 echo "  local_agent_terminate  — Stop and clean up"
 echo ""
-info "Next steps:"
-echo "  1. Set one of these env vars in .claude/settings.json under the MCP server config:"
-echo "     DEEPSEEK_API_KEY  → DeepSeek (highest priority)"
-echo "     DASHSCOPE_API_KEY → Qwen / DashScope (Alibaba)"
-echo "     MOONSHOT_API_KEY  → Kimi / Moonshot"
-echo "     ZHIPU_API_KEY     → Zhipu / BigModel"
-echo "     ARK_API_KEY       → Doubao / Ark (ByteDance)"
-echo "  2. Optional: MAX_CONCURRENT_LOCAL_AGENTS=5 (default: 3)"
-echo "  3. Restart Claude Code (or reload the MCP server)"
-echo "  4. Test: local_agent_create + local_agent_prompt"
-echo ""
-info "One-liner for new users:"
-echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
-echo ""
+# =============================================================================
+# Step 12: Interactive provider configuration
+# =============================================================================
+
+PROVIDER_NAMES=("DeepSeek" "Qwen (DashScope)" "Kimi (Moonshot)" "Zhipu (BigModel/GLM)" "Doubao (Ark/ByteDance)")
+PROVIDER_VARS=("DEEPSEEK_API_KEY" "DASHSCOPE_API_KEY" "MOONSHOT_API_KEY" "ZHIPU_API_KEY" "ARK_API_KEY")
+PROVIDER_URLS=("https://api.deepseek.com/v1/models" "https://dashscope.aliyuncs.com/api/v1/models" "https://api.moonshot.cn/v1/models" "https://open.bigmodel.cn/api/paas/v4/models" "https://ark.cn-beijing.volces.com/api/v3/models")
+PROVIDER_MODELS=("deepseek-v4-flash" "qwen3.6-plus" "kimi-k2.5" "glm-4.6" "doubao-seed-1.6")
+
+test_connectivity() {
+  local url="$1" apikey="$2"
+  curl -s -o /dev/null -w "%{http_code}" -X GET "$url" \
+    -H "Authorization: Bearer $apikey" \
+    -H "Content-Type: application/json" \
+    --max-time 10 2>/dev/null
+}
+
+print_manual_guide() {
+  echo ""
+  info "Manual API key configuration:"
+  echo "  1. Set one of these env vars in .claude/settings.json under the MCP server config:"
+  for i in "${!PROVIDER_NAMES[@]}"; do
+    printf "     %-20s → %s\n" "${PROVIDER_VARS[$i]}" "${PROVIDER_NAMES[$i]}"
+  done
+  echo "  2. Optional: MAX_CONCURRENT_LOCAL_AGENTS=5 (default: 3)"
+  echo "  3. Restart Claude Code (or reload the MCP server)"
+  echo "  4. Test: local_agent_create + local_agent_prompt"
+}
+
+# ---- TTY detection: skip interactive menu in non-TTY (pipe, CI) ----
+if [ -t 0 ]; then
+  echo ""
+  info "Let's configure your LLM provider API key now."
+
+  PS3="Enter number (1-${#PROVIDER_NAMES[@]}, or $(( ${#PROVIDER_NAMES[@]} + 1 )) to skip): "
+
+  select PROVIDER_CHOICE in "${PROVIDER_NAMES[@]}" "Skip — I'll configure later"; do
+    if [ -n "$PROVIDER_CHOICE" ]; then
+      break
+    fi
+    echo "Invalid selection. Please enter a number from 1 to $(( ${#PROVIDER_NAMES[@]} + 1 ))."
+  done
+
+  if [ "$PROVIDER_CHOICE" = "Skip — I'll configure later" ]; then
+    print_manual_guide
+    echo ""
+    info "One-liner for new users:"
+    echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
+    echo ""
+    exit 0
+  fi
+
+  # Resolve selected index
+  IDX=-1
+  for i in "${!PROVIDER_NAMES[@]}"; do
+    if [ "${PROVIDER_NAMES[$i]}" = "$PROVIDER_CHOICE" ]; then
+      IDX=$i
+      break
+    fi
+  done
+
+  ENV_VAR="${PROVIDER_VARS[$IDX]}"
+  TEST_URL="${PROVIDER_URLS[$IDX]}"
+  DEFAULT_MODEL="${PROVIDER_MODELS[$IDX]}"
+
+  ATTEMPTS=0
+  MAX_ATTEMPTS=3
+
+  while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+    echo ""
+    info "Provider: $PROVIDER_CHOICE"
+    info "Required env var: $ENV_VAR"
+    echo ""
+    read -s -p "Enter your API key (input hidden, press Enter when done): " APIKEY
+    echo ""
+
+    if [ -z "$APIKEY" ]; then
+      warn "API key cannot be empty."
+      ATTEMPTS=$((ATTEMPTS + 1))
+      REMAINING=$((MAX_ATTEMPTS - ATTEMPTS))
+      if [ $REMAINING -gt 0 ]; then
+        info "Remaining attempts: $REMAINING"
+      fi
+      continue
+    fi
+
+    echo ""
+    info "Testing connectivity to $PROVIDER_CHOICE..."
+    HTTP_CODE=$(test_connectivity "$TEST_URL" "$APIKEY")
+
+    if [ -n "$HTTP_CODE" ] && [ "$HTTP_CODE" -ge 200 ] 2>/dev/null && [ "$HTTP_CODE" -lt 300 ] 2>/dev/null; then
+      ok "Connection successful! (HTTP $HTTP_CODE) — API key is valid."
+      echo ""
+      ok "=== Setup complete! ==="
+      echo ""
+      info "To use this key in your current terminal, run:"
+      echo ""
+      echo "    export $ENV_VAR=\"\$YOUR_API_KEY\""
+      echo ""
+      info "Or add to .claude/settings.json MCP server env config:"
+      echo ""
+      echo '    "env": {'
+      echo "      \"$ENV_VAR\": \"<your-api-key>\""
+      echo '    }'
+      echo ""
+      info "Default model for this provider: $DEFAULT_MODEL"
+      info "Restart Claude Code (or reload the MCP server), then test with:"
+      echo "  local_agent_create + local_agent_prompt"
+      echo ""
+      info "One-liner for new users:"
+      echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
+      echo ""
+      exit 0
+    elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+      warn "API key rejected (HTTP $HTTP_CODE). Check that your key is correct and not expired."
+      ATTEMPTS=$((ATTEMPTS + 1))
+      REMAINING=$((MAX_ATTEMPTS - ATTEMPTS))
+      if [ $REMAINING -gt 0 ]; then
+        info "Remaining attempts: $REMAINING"
+      fi
+    elif [ "$HTTP_CODE" = "000" ] || [ -z "$HTTP_CODE" ]; then
+      warn "Network error: unable to reach the API endpoint. Check your internet connection."
+      ATTEMPTS=$((ATTEMPTS + 1))
+      REMAINING=$((MAX_ATTEMPTS - ATTEMPTS))
+      if [ $REMAINING -gt 0 ]; then
+        info "Remaining attempts: $REMAINING"
+      fi
+    else
+      warn "Unexpected response (HTTP $HTTP_CODE). The API may be temporarily unavailable."
+      ATTEMPTS=$((ATTEMPTS + 1))
+      REMAINING=$((MAX_ATTEMPTS - ATTEMPTS))
+      if [ $REMAINING -gt 0 ]; then
+        info "Remaining attempts: $REMAINING"
+      fi
+    fi
+  done
+
+  # Max attempts exhausted
+  echo ""
+  warn "3 attempts exhausted — switching to manual configuration."
+  print_manual_guide
+  echo ""
+  info "One-liner for new users:"
+  echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
+  echo ""
+
+else
+  # ---- Non-interactive mode: print manual guide ----
+  print_manual_guide
+  echo ""
+  info "One-liner for new users:"
+  echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
+  echo ""
+fi
