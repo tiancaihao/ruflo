@@ -41,40 +41,36 @@ REPO_RAW="https://raw.githubusercontent.com/tiancaihao/ruflo/main"
 
 info "Starting multi-provider setup..."
 
-# Step 1: Ensure npx can fetch the latest ruflo
-info "Downloading ruflo@latest via npx (this primes the cache)..."
-npx -y ruflo@latest --version > /dev/null 2>&1 || {
-    warn "ruflo --version exited non-zero (may be normal for some versions). Continuing..."
-}
-
-# Step 2: Locate the npx cache directory containing agent-execute-core.js
+# Step 1: Locate the npx cache directory containing agent-execute-core.js
 # Scan all caches and pick the most recently modified target file
 TARGET_FILE=$(find ~/.npm/_npx -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null | while read f; do echo "$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null || echo 0) $f"; done | sort -rn | head -1 | awk '{print $2}')
 
 if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
-    err "Could not find agent-execute-core.js in any npx cache."
-    err "Make sure ruflo has been cached by npx. Try running:"
-    err "  npx -y ruflo@latest --version"
-    exit 1
+    # Cache miss — ruflo not installed, init it
+    info "ruflo not found. Running npx ruflo init..."
+    npx -y ruflo@latest init || {
+        err "ruflo init failed. Please check your network and try again."
+        exit 1
+    }
+
+    # Re-scan after init
+    TARGET_FILE=$(find ~/.npm/_npx -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null | while read f; do echo "$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null || echo 0) $f"; done | sort -rn | head -1 | awk '{print $2}')
+
+    if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
+        err "Could not find agent-execute-core.js after init."
+        err "Try running: npx ruflo init"
+        exit 1
+    fi
 fi
 
 info "Found target: $TARGET_FILE"
 
-# Step 3: Check if L1 patch already applied
-L1_PATCHED=false
-if grep -q "OPENAI_COMPAT_PROVIDERS" "$TARGET_FILE" 2>/dev/null; then
-    ok "Multi-provider routing (L1) is already installed."
-    L1_PATCHED=true
-fi
+# Step 3: Create backup
+BACKUP="$TARGET_FILE.bak.$(date +%s)"
+cp "$TARGET_FILE" "$BACKUP"
+info "Backup created at $BACKUP"
 
-# Step 4-6: Apply L1 multi-provider patch (skip if already done)
-if [ "$L1_PATCHED" = false ]; then
-    # Step 4: Create backup
-    BACKUP="$TARGET_FILE.bak.$(date +%s)"
-    cp "$TARGET_FILE" "$BACKUP"
-    info "Backup created at $BACKUP"
-
-# Step 5: Apply the multi-provider patch via node (temp file to avoid escaping hell)
+# Step 4: Apply L1 multi-provider patch (idempotent — safe to re-run)
 info "Patching agent-execute-core.js with multi-provider routing..."
 
 PATCH_SCRIPT=$(mktemp /tmp/ruflo-patch.XXXXXX.js)
@@ -142,8 +138,32 @@ const PROVIDER_TABLE = [
 "}",
 ].join("\n");
 
-// Prepend provider table to code
-code = PROVIDER_TABLE + "\n" + code;
+// Only prepend provider table if not already patched (idempotent)
+if (!code.includes("// --- ruflo multi-provider routing")) {
+  code = PROVIDER_TABLE + "\n" + code;
+} else {
+  // Replace old provider table: remove from marker to end of resolveOpenAICompatModel
+  const marker = "// --- ruflo multi-provider routing (setup.sh patch) ---";
+  const idx = code.indexOf(marker);
+  if (idx !== -1) {
+    // find the closing } of resolveOpenAICompatModel
+    const funcStart = code.indexOf("function resolveOpenAICompatModel", idx);
+    if (funcStart !== -1) {
+      let braceCount = 0;
+      let inFunc = false;
+      let endIdx = funcStart;
+      for (let i = funcStart; i < code.length; i++) {
+        if (code[i] === '{') { braceCount++; inFunc = true; }
+        if (code[i] === '}') {
+          braceCount--;
+          if (inFunc && braceCount === 0) { endIdx = i + 1; break; }
+        }
+      }
+      code = code.slice(0, idx) + code.slice(endIdx);
+    }
+  }
+  code = PROVIDER_TABLE + "\n" + code;
+}
 
 // ---- Add callOpenAICompat function ----
 const callOpenAICompatFn = [
@@ -187,8 +207,10 @@ const callOpenAICompatFn = [
 "}",
 ].join("\n");
 
-// Insert callOpenAICompat before callAnthropicMessages (include 'export' to preserve the export on callAnthropicMessages)
-code = code.replace(/(export async function callAnthropicMessages)/, callOpenAICompatFn + "\n$1");
+// Only insert callOpenAICompat if not already present (idempotent)
+if (!code.includes("async function callOpenAICompat")) {
+  code = code.replace(/(export async function callAnthropicMessages)/, callOpenAICompatFn + "\n$1");
+}
 
 // ---- Add callDeepSeekMessages function ----
 const callDeepSeekFn = [
@@ -230,19 +252,26 @@ const callDeepSeekFn = [
 "}",
 ].join("\n");
 
-code = code.replace(/(export async function callAnthropicMessages)/, callDeepSeekFn + "\n$1");
+// Only insert callDeepSeekMessages if not already present (idempotent)
+if (!code.includes("async function callDeepSeekMessages")) {
+  code = code.replace(/(export async function callAnthropicMessages)/, callDeepSeekFn + "\n$1");
+}
 
-// ---- Patch callAnthropicMessages ----
-code = code.replace(
-  /(async function callAnthropicMessages\([^)]*\)\s*\{)/,
-  "$1\n  // Multi-provider: check DeepSeek first\n  const __deepseekKey = process.env.DEEPSEEK_API_KEY;\n  const __explicitProvider = (process.env.RUFLO_PROVIDER || \"\").toLowerCase();\n  const __useDeepSeek = __explicitProvider === \"deepseek\" || (!__explicitProvider && !!__deepseekKey);\n  if (__useDeepSeek && __deepseekKey) {\n    var __dsTier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    var __dsModel = __dsTier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n    return callDeepSeekMessages(Object.assign({}, input, { apiKey: __deepseekKey, model: __dsModel }));\n  }\n\n  // Multi-provider: check OpenAI-compat providers (Qwen, Kimi, Zhipu, Doubao)\n  const __compat = findFirstOpenAICompatKey();\n  if (__compat && (__explicitProvider === __compat.provider || !__explicitProvider || __explicitProvider === \"ollama\")) {\n    var __tier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    __compat.chosenModel = __compat[__tier + \"Model\"] || __compat.defaultModel;\n    return callOpenAICompat(input, __compat);\n  }\n"
-);
+// Only patch callAnthropicMessages if not already done (idempotent)
+if (!code.includes("// Multi-provider: check DeepSeek first")) {
+  code = code.replace(
+    /(async function callAnthropicMessages\([^)]*\)\s*\{)/,
+    "$1\n  // Multi-provider: check DeepSeek first\n  const __deepseekKey = process.env.DEEPSEEK_API_KEY;\n  const __explicitProvider = (process.env.RUFLO_PROVIDER || \"\").toLowerCase();\n  const __useDeepSeek = __explicitProvider === \"deepseek\" || (!__explicitProvider && !!__deepseekKey);\n  if (__useDeepSeek && __deepseekKey) {\n    var __dsTier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    var __dsModel = __dsTier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n    return callDeepSeekMessages(Object.assign({}, input, { apiKey: __deepseekKey, model: __dsModel }));\n  }\n\n  // Multi-provider: check OpenAI-compat providers (Qwen, Kimi, Zhipu, Doubao)\n  const __compat = findFirstOpenAICompatKey();\n  if (__compat && (__explicitProvider === __compat.provider || !__explicitProvider || __explicitProvider === \"ollama\")) {\n    var __tier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    __compat.chosenModel = __compat[__tier + \"Model\"] || __compat.defaultModel;\n    return callOpenAICompat(input, __compat);\n  }\n"
+  );
+}
 
-// ---- Patch executeAgentTask ----
-code = code.replace(
-  /(async function executeAgentTask\([^)]*\)\s*\{)/,
-  "$1\n  // Multi-provider: check for DeepSeek or OpenAI-compat keys\n  const __dsKey = process.env.DEEPSEEK_API_KEY;\n  const __explicitP = (process.env.RUFLO_PROVIDER || \"\").toLowerCase();\n  const __useDS = __explicitP === \"deepseek\" || (!__explicitP && !!__dsKey);\n  const __compatP = !__useDS ? findFirstOpenAICompatKey() : null;\n  const __useCompat = __compatP && (__explicitP === __compatP.provider || !__explicitP);\n"
-);
+// Only patch executeAgentTask if not already done (idempotent)
+if (!code.includes("// Multi-provider: check for DeepSeek or OpenAI-compat keys")) {
+  code = code.replace(
+    /(async function executeAgentTask\([^)]*\)\s*\{)/,
+    "$1\n  // Multi-provider: check for DeepSeek or OpenAI-compat keys\n  const __dsKey = process.env.DEEPSEEK_API_KEY;\n  const __explicitP = (process.env.RUFLO_PROVIDER || \"\").toLowerCase();\n  const __useDS = __explicitP === \"deepseek\" || (!__explicitP && !!__dsKey);\n  const __compatP = !__useDS ? findFirstOpenAICompatKey() : null;\n  const __useCompat = __compatP && (__explicitP === __compatP.provider || !__explicitP);\n"
+  );
+}
 
 // Update the API key check to allow multi-provider (split into simple replacements to avoid nested-brace regex issues)
 code = code.replace(
@@ -258,11 +287,13 @@ code = code.replace(
   "'No LLM provider configured. Set DEEPSEEK_API_KEY, DASHSCOPE_API_KEY (Qwen), MOONSHOT_API_KEY (Kimi), ZHIPU_API_KEY (GLM), ARK_API_KEY (Doubao), OLLAMA_API_KEY, or ANTHROPIC_API_KEY.'"
 );
 
-// Add routing before the fetch call in executeAgentTask (use saveAgentStore as anchor unique to executeAgentTask)
-code = code.replace(
-  /(saveAgentStore\(store\);)(\s*)(const startedAt = Date\.now\(\);)(\s*)(try\s*\{)/,
-  "$1\n\n// Multi-provider routing\nif (__useDS && __dsKey) {\n  const __tier = agent.model || \"sonnet\";\n  const __dsModel = __tier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n  const __dsResult = await callDeepSeekMessages({ prompt: input.prompt, systemPrompt: systemPrompt, model: __dsModel, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs, apiKey: __dsKey });\n  if (__dsResult.success) {\n    agent.status = \"idle\"; agent.lastResult = __dsResult; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __dsResult.messageId, model: __dsResult.model, stopReason: __dsResult.stopReason, output: __dsResult.output, usage: __dsResult.usage, durationMs: __dsResult.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __dsModel, error: __dsResult.error };\n}\n\nif (__useCompat && __compatP) {\n  const __tier = agent.model || \"sonnet\";\n  const __model = resolveOpenAICompatModel(__tier, __compatP.provider);\n  __compatP.chosenModel = __model;\n  const __result = await callOpenAICompat({ prompt: input.prompt, systemPrompt: systemPrompt, model: __model, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs }, __compatP);\n  if (__result.success) {\n    agent.status = \"idle\"; agent.lastResult = __result; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __result.messageId, model: __result.model, stopReason: __result.stopReason, output: __result.output, usage: __result.usage, durationMs: __result.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __model, error: __result.error };\n}\n\n$3$4$5"
-);
+// Only add routing block if not already present (idempotent)
+if (!code.includes("// Multi-provider routing")) {
+  code = code.replace(
+    /(saveAgentStore\(store\);)(\s*)(const startedAt = Date\.now\(\);)(\s*)(try\s*\{)/,
+    "$1\n\n// Multi-provider routing\nif (__useDS && __dsKey) {\n  const __tier = agent.model || \"sonnet\";\n  const __dsModel = __tier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n  const __dsResult = await callDeepSeekMessages({ prompt: input.prompt, systemPrompt: systemPrompt, model: __dsModel, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs, apiKey: __dsKey });\n  if (__dsResult.success) {\n    agent.status = \"idle\"; agent.lastResult = __dsResult; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __dsResult.messageId, model: __dsResult.model, stopReason: __dsResult.stopReason, output: __dsResult.output, usage: __dsResult.usage, durationMs: __dsResult.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __dsModel, error: __dsResult.error };\n}\n\nif (__useCompat && __compatP) {\n  const __tier = agent.model || \"sonnet\";\n  const __model = resolveOpenAICompatModel(__tier, __compatP.provider);\n  __compatP.chosenModel = __model;\n  const __result = await callOpenAICompat({ prompt: input.prompt, systemPrompt: systemPrompt, model: __model, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs }, __compatP);\n  if (__result.success) {\n    agent.status = \"idle\"; agent.lastResult = __result; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __result.messageId, model: __result.model, stopReason: __result.stopReason, output: __result.output, usage: __result.usage, durationMs: __result.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __model, error: __result.error };\n}\n\n$3$4$5"
+  );
+}
 
 fs.writeFileSync(target, code, "utf-8");
 ENDOFPATCH
@@ -287,10 +318,9 @@ else
     err "Original file restored. No changes were made."
     exit 1
 fi
-fi  # End of L1 patch block
 
 # =============================================================================
-# Step 7: Layer 2 fix — Patch agent-wasm.js to allow DEEPSEEK_API_KEY
+# Step 6: Layer 2 fix — Patch agent-wasm.js to allow DEEPSEEK_API_KEY
 # =============================================================================
 BASE_DIR=$(dirname "$TARGET_FILE")                    # .../mcp-tools/
 DIST_DIR=$(dirname "$BASE_DIR")                       # .../dist/src/
