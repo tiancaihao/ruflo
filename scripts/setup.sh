@@ -41,20 +41,31 @@ REPO_RAW="https://raw.githubusercontent.com/tiancaihao/ruflo/main"
 
 info "Starting multi-provider setup..."
 
-# Step 1: Locate the npx cache directory containing agent-execute-core.js
-# Scan all caches and pick the most recently modified target file
-TARGET_FILE=$(find ~/.npm/_npx -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null | while read f; do echo "$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null || echo 0) $f"; done | sort -rn | head -1 | awk '{print $2}')
+# Search for agent-execute-core.js across npx cache, global npm, and nvm
+find_target_file() {
+  for search_dir in \
+    ~/.npm/_npx \
+    "$(npm root -g 2>/dev/null)" \
+    ~/.nvm/versions/node/*/lib/node_modules \
+    /usr/local/lib/node_modules; \
+  do
+    [ -d "$search_dir" ] 2>/dev/null || continue
+    find "$search_dir" -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null
+  done | while read f; do
+    echo "$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null || echo 0) $f"
+  done | sort -rn | head -1 | awk '{print $2}'
+}
+
+TARGET_FILE=$(find_target_file)
 
 if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
-    # Cache miss — ruflo not installed, init it
     info "ruflo not found. Running npx ruflo init..."
     npx -y ruflo@latest init || {
         err "ruflo init failed. Please check your network and try again."
         exit 1
     }
 
-    # Re-scan after init
-    TARGET_FILE=$(find ~/.npm/_npx -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null | while read f; do echo "$(stat -f '%m' "$f" 2>/dev/null || stat -c '%Y' "$f" 2>/dev/null || echo 0) $f"; done | sort -rn | head -1 | awk '{print $2}')
+    TARGET_FILE=$(find_target_file)
 
     if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
         err "Could not find agent-execute-core.js after init."
