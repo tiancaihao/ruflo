@@ -86,7 +86,7 @@ info "Backup created at $BACKUP"
 # Step 4: Apply L1 multi-provider patch (idempotent — safe to re-run)
 info "Patching agent-execute-core.js with multi-provider routing..."
 
-PATCH_SCRIPT=$(mktemp /tmp/ruflo-patch.XXXXXX.js)
+PATCH_SCRIPT=$(mktemp /tmp/ruflo-patch.XXXXXX.cjs)
 cat << 'ENDOFPATCH' > "$PATCH_SCRIPT"
 const fs = require("fs");
 const target = process.argv[2];
@@ -344,7 +344,7 @@ if [ -f "$WASM_FILE" ]; then
     cp "$WASM_FILE" "$WASM_BACKUP"
     info "Layer 2 WASM Agent backup at $WASM_BACKUP"
 
-    PATCH_WASM=$(mktemp /tmp/ruflo-patch-wasm.XXXXXX.js)
+    PATCH_WASM=$(mktemp /tmp/ruflo-patch-wasm.XXXXXX.cjs)
     cat << 'ENDOFWASM' > "$PATCH_WASM"
 const fs = require("fs");
 const target = process.argv[2];
@@ -382,7 +382,7 @@ fi
 # =============================================================================
 # Step 8: Download & copy local-agent-loop.js into npx cache
 # =============================================================================
-LOOP_TMP=$(mktemp /tmp/local-agent-loop.XXXXXX.js)
+LOOP_TMP=$(mktemp /tmp/local-agent-loop.XXXXXX.cjs)
 
 # Try local first (dev mode), then GitHub raw (curl-pipe-bash mode)
 if [ -f "$SCRIPT_DIR/../src/local-agent-loop.js" ]; then
@@ -405,7 +405,7 @@ rm -f "$LOOP_TMP"
 # =============================================================================
 # Step 9: Download & copy local-agent-tools.js into npx cache
 # =============================================================================
-TOOLS_TMP=$(mktemp /tmp/local-agent-tools.XXXXXX.js)
+TOOLS_TMP=$(mktemp /tmp/local-agent-tools.XXXXXX.cjs)
 
 if [ -f "$SCRIPT_DIR/../src/local-agent-tools.js" ]; then
     cp "$SCRIPT_DIR/../src/local-agent-tools.js" "$TOOLS_TMP"
@@ -437,7 +437,7 @@ if [ -f "$INDEX_FILE" ]; then
     if grep -q "localAgentTools" "$INDEX_FILE" 2>/dev/null; then
         ok "localAgentTools already registered in mcp-tools/index.js."
     else
-        PATCH_INDEX=$(mktemp /tmp/ruflo-patch-index.XXXXXX.js)
+        PATCH_INDEX=$(mktemp /tmp/ruflo-patch-index.XXXXXX.cjs)
         cat << 'ENDOFINDEX' > "$PATCH_INDEX"
 const fs = require("fs");
 const target = process.argv[2];
@@ -676,15 +676,17 @@ if [ -t 0 ]; then
       ok "Connection successful! (HTTP $HTTP_CODE) — API key is valid."
       echo ""
 
-      # Persist env var by wrapping MCP command with bash -c (guarantees env is set)
+      # Lock MCP server to patched files (avoid npx re-downloading unpatchched code)
       CLAUDE_JSON="$HOME/.claude.json"
-      if [ -f "$CLAUDE_JSON" ]; then
-        MCP_PATCH=$(mktemp /tmp/ruflo-mcp-env.XXXXXX.js)
+      MCP_SERVER="${TARGET_FILE%\/dist\/src\/mcp-tools\/agent-execute-core.js}/bin/mcp-server.js"
+      if [ -f "$MCP_SERVER" ]; then
+        MCP_PATCH=$(mktemp /tmp/ruflo-mcp-env.XXXXXX.cjs)
         cat << 'ENDMCPPATCH' > "$MCP_PATCH"
 const fs = require("fs");
 const target = process.argv[2];
 const envVar = process.argv[3];
 const apiKey = process.argv[4];
+const mcpServer = process.argv[5];
 
 let data;
 try {
@@ -708,11 +710,8 @@ for (const [name, cfg] of Object.entries(data.mcpServers)) {
   }
 }
 
-// Collect existing env vars (from env field or from bash -c wrapper)
+// Collect existing env vars from bash -c wrapper (for multi-provider support)
 let envVars = {};
-if (existingCfg && existingCfg.env) {
-  Object.assign(envVars, existingCfg.env);
-}
 if (existingCfg && existingCfg.command === "bash" && existingCfg.args && existingCfg.args[0] === "-c") {
   const cmdStr = existingCfg.args[1] || "";
   const matches = cmdStr.matchAll(/(\w+)=('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\S+)/g);
@@ -721,15 +720,18 @@ if (existingCfg && existingCfg.command === "bash" && existingCfg.args && existin
     envVars[m[1]] = val;
   }
 }
+if (existingCfg && existingCfg.env) {
+  Object.assign(envVars, existingCfg.env);
+}
 
 // Set the new key
 envVars[envVar] = apiKey;
 
-// Build bash -c command with all env vars
+// Build bash -c with env vars + exec node to patched MCP server
 const exports = Object.entries(envVars)
   .map(([k, v]) => k + "='" + v.replace(/'/g, "'\\''") + "'")
   .join(" ");
-const cmd = exports + " exec npx -y ruflo@latest mcp start";
+const cmd = exports + " exec node " + mcpServer;
 
 if (!serverName) {
   serverName = "claude-flow";
@@ -738,31 +740,30 @@ data.mcpServers[serverName] = {
   command: "bash",
   args: ["-c", cmd]
 };
-// Remove env field since vars are now inline
 delete data.mcpServers[serverName].env;
 
-// Write atomically
 const tmpPath = target + ".tmp." + Date.now();
 fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
 fs.renameSync(tmpPath, target);
 
-console.log("Written " + envVar + " to MCP server '" + serverName + "'");
+console.log("MCP server locked to patched files: " + mcpServer);
+console.log("Wrote " + envVar + " to MCP server '" + serverName + "'");
 ENDMCPPATCH
 
-        node "$MCP_PATCH" "$CLAUDE_JSON" "$ENV_VAR" "$APIKEY"
+        node "$MCP_PATCH" "$CLAUDE_JSON" "$ENV_VAR" "$APIKEY" "$MCP_SERVER"
         PATCH_EXIT=$?
         rm -f "$MCP_PATCH"
 
         if [ $PATCH_EXIT -eq 0 ]; then
-          ok "API key saved to MCP server config."
+          ok "API key saved. MCP server locked to patched files."
         else
-          warn "Could not auto-save API key to MCP config."
-          info "Add this manually to ~/.claude.json under mcpServers.claude-flow.env:"
-          echo "    \"$ENV_VAR\": \"<your-api-key>\""
+          warn "Could not auto-save MCP config."
+          info "Add this manually to ~/.claude.json:"
+          echo "    export $ENV_VAR=\"<your-api-key>\""
         fi
       else
-        info "~/.claude.json not found. Set the env var manually:"
-        echo "    export $ENV_VAR=\"<your-api-key>\""
+        warn "mcp-server.js not found at $MCP_SERVER — MCP config not updated."
+        info "You may need to re-run setup after running 'npx ruflo init'."
       fi
 
       # ---- Doctor summary ----
