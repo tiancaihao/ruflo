@@ -458,90 +458,70 @@ PROVIDER_MODELS=("deepseek-v4-flash" "qwen3.6-plus" "kimi-k2.5" "glm-4.6" "douba
 interactive_select() {
   local opts=("$@")
   local script result_file
-  script=$(mktemp /tmp/ruflo-select.XXXXXX.js)
+  script=$(mktemp /tmp/ruflo-select.XXXXXX.cjs)
   result_file=$(mktemp /tmp/ruflo-select-result.XXXXXX)
 
   cat << 'SELECTJS' > "$script"
 const fs = require('fs');
-const readline = require('readline');
 
-const resultFile = process.argv[1];
-const opts = process.argv.slice(2);
+const resultFile = process.argv[2];
+const opts = process.argv.slice(3);
+const out = process.stderr;
 
-function select(opts) {
-  return new Promise((resolve) => {
-    let idx = 0;
-    const len = opts.length;
+let idx = 0;
+const len = opts.length;
 
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: true
-    });
-
-    process.stdin.setRawMode(true);
-    readline.emitKeypressEvents(process.stdin);
-
-    function render() {
-      for (let i = 0; i < len; i++) {
-        process.stdout.write('\x1b[2K'); // clear line
-        if (i === idx) {
-          process.stdout.write('\x1b[36m❯ ' + opts[i] + '\x1b[0m\n');
-        } else {
-          process.stdout.write('  ' + opts[i] + '\n');
-        }
-      }
-      if (len > 0) process.stdout.write('\x1b[' + len + 'A');
+function render() {
+  for (let i = 0; i < len; i++) {
+    out.write('\x1b[2K');
+    if (i === idx) {
+      out.write('\x1b[36m❯ ' + opts[i] + '\x1b[0m\n');
+    } else {
+      out.write('  ' + opts[i] + '\n');
     }
-
-    render();
-
-    const onKey = (str, key) => {
-      if (key.name === 'up') {
-        idx = (idx - 1 + len) % len;
-        render();
-      } else if (key.name === 'down') {
-        idx = (idx + 1) % len;
-        render();
-      } else if (key.name === 'return' || key.name === 'enter') {
-        cleanup();
-        resolve(idx);
-      } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
-        cleanup();
-        resolve(-1);
-      }
-    };
-
-    function cleanup() {
-      process.stdout.write('\x1b[' + len + 'B'); // move to list end
-      process.stdout.write('\x1b[?25h'); // show cursor
-      process.stdin.setRawMode(false);
-      process.stdin.removeListener('keypress', onKey);
-      rl.close();
-    }
-
-    process.stdin.on('keypress', onKey);
-    process.stdout.write('\x1b[?25l'); // hide cursor
-  });
+  }
+  if (len > 0) out.write('\x1b[' + len + 'A');
 }
 
-select(opts).then(idx => {
-  fs.writeFileSync(resultFile, String(idx), 'utf-8');
-  process.exit(0);
-}).catch(() => {
+function cleanup() {
+  out.write('\x1b[' + len + 'B');
+  out.write('\x1b[?25h');
+  process.stdin.setRawMode(false);
+  process.stdin.pause();
+}
+
+try {
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  require('readline').emitKeypressEvents(process.stdin);
+  out.write('\x1b[?25l');
+  render();
+
+  process.stdin.on('keypress', (str, key) => {
+    if (key.name === 'up') {
+      idx = (idx - 1 + len) % len;
+      render();
+    } else if (key.name === 'down') {
+      idx = (idx + 1) % len;
+      render();
+    } else if (key.name === 'return' || key.name === 'enter') {
+      cleanup();
+      fs.writeFileSync(resultFile, String(idx), 'utf-8');
+      process.exit(0);
+    } else if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+      cleanup();
+      fs.writeFileSync(resultFile, '-1', 'utf-8');
+      process.exit(0);
+    }
+  });
+} catch (e) {
   fs.writeFileSync(resultFile, '-1', 'utf-8');
   process.exit(1);
-});
+}
 SELECTJS
 
-  # Run node with stdout/stderr connected to TTY so render output is visible
-  # Result is written to result_file, read back after node exits
-  if [ -t 0 ]; then
-    node "$script" "$result_file" "${opts[@]}" >/dev/tty 2>/dev/tty </dev/tty
-  else
-    # Non-TTY: just return 0 (first option)
-    echo "0" > "$result_file"
-  fi
+  node "$script" "$result_file" "${opts[@]}" </dev/tty
+  local node_rc=$?
 
   local result
   if [ -f "$result_file" ]; then
@@ -551,7 +531,7 @@ SELECTJS
   fi
   rm -f "$script" "$result_file"
 
-  if [ "$result" = "-1" ]; then
+  if [ "$result" = "-1" ] || [ $node_rc -ne 0 ]; then
     return 255
   fi
   echo "$result"
