@@ -676,17 +676,15 @@ if [ -t 0 ]; then
       ok "Connection successful! (HTTP $HTTP_CODE) — API key is valid."
       echo ""
 
-      # Persist the API key to Claude Code MCP server config
+      # Persist env var by wrapping MCP command with bash -c (guarantees env is set)
       CLAUDE_JSON="$HOME/.claude.json"
       if [ -f "$CLAUDE_JSON" ]; then
         MCP_PATCH=$(mktemp /tmp/ruflo-mcp-env.XXXXXX.js)
         cat << 'ENDMCPPATCH' > "$MCP_PATCH"
 const fs = require("fs");
-const path = require("path");
 const target = process.argv[2];
 const envVar = process.argv[3];
 const apiKey = process.argv[4];
-const model = process.argv[5];
 
 let data;
 try {
@@ -698,29 +696,50 @@ try {
 
 if (!data.mcpServers) data.mcpServers = {};
 
-// Find any server that runs ruflo or claude-flow
+// Find existing ruflo/claude-flow server
 let serverName = null;
+let existingCfg = null;
 for (const [name, cfg] of Object.entries(data.mcpServers)) {
   const cmd = (cfg.command || "") + " " + (cfg.args || []).join(" ");
   if (cmd.includes("ruflo") || cmd.includes("claude-flow") || name.includes("claude-flow") || name.includes("ruflo")) {
     serverName = name;
+    existingCfg = cfg;
     break;
   }
 }
 
-if (!serverName) {
-  // No existing ruflo server — create one
-  serverName = "claude-flow";
-  data.mcpServers[serverName] = {
-    command: "npx",
-    args: ["-y", "ruflo@latest", "mcp", "start"]
-  };
+// Collect existing env vars (from env field or from bash -c wrapper)
+let envVars = {};
+if (existingCfg && existingCfg.env) {
+  Object.assign(envVars, existingCfg.env);
+}
+if (existingCfg && existingCfg.command === "bash" && existingCfg.args && existingCfg.args[0] === "-c") {
+  const cmdStr = existingCfg.args[1] || "";
+  const matches = cmdStr.matchAll(/(\w+)=('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\S+)/g);
+  for (const m of matches) {
+    let val = m[2].replace(/^['"]|['"]$/g, '');
+    envVars[m[1]] = val;
+  }
 }
 
-if (!data.mcpServers[serverName].env) {
-  data.mcpServers[serverName].env = {};
+// Set the new key
+envVars[envVar] = apiKey;
+
+// Build bash -c command with all env vars
+const exports = Object.entries(envVars)
+  .map(([k, v]) => k + "='" + v.replace(/'/g, "'\\''") + "'")
+  .join(" ");
+const cmd = exports + " exec npx -y ruflo@latest mcp start";
+
+if (!serverName) {
+  serverName = "claude-flow";
 }
-data.mcpServers[serverName].env[envVar] = apiKey;
+data.mcpServers[serverName] = {
+  command: "bash",
+  args: ["-c", cmd]
+};
+// Remove env field since vars are now inline
+delete data.mcpServers[serverName].env;
 
 // Write atomically
 const tmpPath = target + ".tmp." + Date.now();
@@ -730,7 +749,7 @@ fs.renameSync(tmpPath, target);
 console.log("Written " + envVar + " to MCP server '" + serverName + "'");
 ENDMCPPATCH
 
-        node "$MCP_PATCH" "$CLAUDE_JSON" "$ENV_VAR" "$APIKEY" "$DEFAULT_MODEL"
+        node "$MCP_PATCH" "$CLAUDE_JSON" "$ENV_VAR" "$APIKEY"
         PATCH_EXIT=$?
         rm -f "$MCP_PATCH"
 
