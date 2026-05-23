@@ -453,17 +453,20 @@ PROVIDER_URLS=("https://api.deepseek.com/v1/models" "https://dashscope.aliyuncs.
 PROVIDER_MODELS=("deepseek-v4-flash" "qwen3.6-plus" "kimi-k2.5" "glm-4.6" "doubao-seed-1.6")
 
 # Node.js-powered interactive select (arrow-key navigation, Enter to confirm)
-# Usage: interactive_select "prompt message" "option1" "option2" ...
+# Usage: interactive_select "option1" "option2" ...
 # Returns: selected index (0-based) on stdout, 255 on cancel
 interactive_select() {
-  local prompt="$1"; shift
   local opts=("$@")
-  local script
+  local script result_file
   script=$(mktemp /tmp/ruflo-select.XXXXXX.js)
+  result_file=$(mktemp /tmp/ruflo-select-result.XXXXXX)
 
   cat << 'SELECTJS' > "$script"
+const fs = require('fs');
 const readline = require('readline');
-const opts = process.argv.slice(1);
+
+const resultFile = process.argv[1];
+const opts = process.argv.slice(2);
 
 function select(opts) {
   return new Promise((resolve) => {
@@ -480,7 +483,6 @@ function select(opts) {
     readline.emitKeypressEvents(process.stdin);
 
     function render() {
-      // Move to start of list, clear below
       for (let i = 0; i < len; i++) {
         process.stdout.write('\x1b[2K'); // clear line
         if (i === idx) {
@@ -489,7 +491,6 @@ function select(opts) {
           process.stdout.write('  ' + opts[i] + '\n');
         }
       }
-      // Move cursor back up to first line
       if (len > 0) process.stdout.write('\x1b[' + len + 'A');
     }
 
@@ -512,7 +513,7 @@ function select(opts) {
     };
 
     function cleanup() {
-      process.stdout.write('\x1b[' + len + 'B'); // move to end
+      process.stdout.write('\x1b[' + len + 'B'); // move to list end
       process.stdout.write('\x1b[?25h'); // show cursor
       process.stdin.setRawMode(false);
       process.stdin.removeListener('keypress', onKey);
@@ -525,32 +526,36 @@ function select(opts) {
 }
 
 select(opts).then(idx => {
-  process.stdout.write(idx.toString());
+  fs.writeFileSync(resultFile, String(idx), 'utf-8');
   process.exit(0);
 }).catch(() => {
-  process.stdout.write('-1');
+  fs.writeFileSync(resultFile, '-1', 'utf-8');
   process.exit(1);
 });
 SELECTJS
 
+  # Run node with stdout/stderr connected to TTY so render output is visible
+  # Result is written to result_file, read back after node exits
+  if [ -t 0 ]; then
+    node "$script" "$result_file" "${opts[@]}" >/dev/tty 2>/dev/tty </dev/tty
+  else
+    # Non-TTY: just return 0 (first option)
+    echo "0" > "$result_file"
+  fi
+
   local result
-  result=$(node "$script" "${opts[@]}" </dev/tty 2>/dev/null)
-  local rc=$?
-  rm -f "$script"
-  if [ $rc -ne 0 ] || [ "$result" = "-1" ]; then
+  if [ -f "$result_file" ]; then
+    result=$(cat "$result_file")
+  else
+    result="-1"
+  fi
+  rm -f "$script" "$result_file"
+
+  if [ "$result" = "-1" ]; then
     return 255
   fi
   echo "$result"
   return 0
-}
-
-# Simple yes/no prompt using the same pattern
-# Usage: confirm "question?" → returns 0 for yes, 1 for no
-confirm() {
-  local prompt="$1"
-  local result
-  result=$(interactive_select "$prompt" "Yes" "No" 2>/dev/null)
-  [ "$result" = "0" ] && return 0 || return 1
 }
 
 test_connectivity() {
@@ -585,7 +590,7 @@ if [ -t 0 ]; then
   info "(1/3) Use ↑↓ to select your LLM provider, Enter to confirm:"
   echo ""
 
-  CHOICE_IDX=$(interactive_select "Select provider" "${PROVIDER_NAMES[@]}" "Skip — I'll configure later")
+  CHOICE_IDX=$(interactive_select "${PROVIDER_NAMES[@]}" "Skip — I'll configure later")
   CHOICE_RC=$?
 
   # Build a clean display of what was selected
@@ -753,7 +758,7 @@ ENDMCPPATCH
       echo ""
       info "Attempt $ATTEMPTS of $MAX_ATTEMPTS failed. What would you like to do?"
       echo ""
-      RETRY_IDX=$(interactive_select "Select action" "Try again" "Skip — configure later")
+      RETRY_IDX=$(interactive_select "Try again" "Skip — configure later")
       if [ "$RETRY_IDX" != "0" ]; then
         echo ""
         info "Skipping API key configuration."
