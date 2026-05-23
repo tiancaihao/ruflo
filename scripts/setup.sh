@@ -39,6 +39,11 @@ err()   { echo -e "${RED}[ruflo-setup]${NC} ✗ $*"; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_RAW="https://raw.githubusercontent.com/tiancaihao/ruflo/main"
 
+# Create temp file with fallback to PID-based name if mktemp fails (e.g. stale XXXX files)
+safe_mktemp() {
+  mktemp "$1" 2>/dev/null || echo "${1//XXXXXX/$$}"
+}
+
 info "Starting multi-provider setup..."
 
 # Search for agent-execute-core.js, prefer shallowest path (avoids nested node_modules copies)
@@ -86,7 +91,7 @@ info "Backup created at $BACKUP"
 # Step 4: Apply L1 multi-provider patch (idempotent — safe to re-run)
 info "Patching agent-execute-core.js with multi-provider routing..."
 
-PATCH_SCRIPT=$(mktemp /tmp/ruflo-patch.XXXXXX.cjs)
+PATCH_SCRIPT=$(safe_mktemp /tmp/ruflo-patch.XXXXXX.cjs)
 cat << 'ENDOFPATCH' > "$PATCH_SCRIPT"
 const fs = require("fs");
 const target = process.argv[2];
@@ -344,7 +349,7 @@ if [ -f "$WASM_FILE" ]; then
     cp "$WASM_FILE" "$WASM_BACKUP"
     info "Layer 2 WASM Agent backup at $WASM_BACKUP"
 
-    PATCH_WASM=$(mktemp /tmp/ruflo-patch-wasm.XXXXXX.cjs)
+    PATCH_WASM=$(safe_mktemp /tmp/ruflo-patch-wasm.XXXXXX.cjs)
     cat << 'ENDOFWASM' > "$PATCH_WASM"
 const fs = require("fs");
 const target = process.argv[2];
@@ -382,7 +387,7 @@ fi
 # =============================================================================
 # Step 8: Download & copy local-agent-loop.js into npx cache
 # =============================================================================
-LOOP_TMP=$(mktemp /tmp/local-agent-loop.XXXXXX.cjs)
+LOOP_TMP=$(safe_mktemp /tmp/local-agent-loop.XXXXXX.cjs)
 
 # Try local first (dev mode), then GitHub raw (curl-pipe-bash mode)
 if [ -f "$SCRIPT_DIR/../src/local-agent-loop.js" ]; then
@@ -405,7 +410,7 @@ rm -f "$LOOP_TMP"
 # =============================================================================
 # Step 9: Download & copy local-agent-tools.js into npx cache
 # =============================================================================
-TOOLS_TMP=$(mktemp /tmp/local-agent-tools.XXXXXX.cjs)
+TOOLS_TMP=$(safe_mktemp /tmp/local-agent-tools.XXXXXX.cjs)
 
 if [ -f "$SCRIPT_DIR/../src/local-agent-tools.js" ]; then
     cp "$SCRIPT_DIR/../src/local-agent-tools.js" "$TOOLS_TMP"
@@ -437,7 +442,7 @@ if [ -f "$INDEX_FILE" ]; then
     if grep -q "localAgentTools" "$INDEX_FILE" 2>/dev/null; then
         ok "localAgentTools already registered in mcp-tools/index.js."
     else
-        PATCH_INDEX=$(mktemp /tmp/ruflo-patch-index.XXXXXX.cjs)
+        PATCH_INDEX=$(safe_mktemp /tmp/ruflo-patch-index.XXXXXX.cjs)
         cat << 'ENDOFINDEX' > "$PATCH_INDEX"
 const fs = require("fs");
 const target = process.argv[2];
@@ -501,8 +506,8 @@ PROVIDER_MODELS=("deepseek-v4-flash" "qwen3.6-plus" "kimi-k2.5" "glm-4.6" "douba
 interactive_select() {
   local opts=("$@")
   local script result_file
-  script=$(mktemp /tmp/ruflo-select.XXXXXX.cjs)
-  result_file=$(mktemp /tmp/ruflo-select-result.XXXXXX)
+  script=$(safe_mktemp /tmp/ruflo-select.XXXXXX.cjs)
+  result_file=$(safe_mktemp /tmp/ruflo-select-result.XXXXXX)
 
   cat << 'SELECTJS' > "$script"
 const fs = require('fs');
@@ -680,7 +685,7 @@ if [ -t 0 ]; then
       CLAUDE_JSON="$HOME/.claude.json"
       MCP_SERVER="${TARGET_FILE%\/dist\/src\/mcp-tools\/agent-execute-core.js}/bin/mcp-server.js"
       if [ -f "$MCP_SERVER" ]; then
-        MCP_PATCH=$(mktemp /tmp/ruflo-mcp-env.XXXXXX.cjs)
+        MCP_PATCH=$(safe_mktemp /tmp/ruflo-mcp-env.XXXXXX.cjs)
         cat << 'ENDMCPPATCH' > "$MCP_PATCH"
 const fs = require("fs");
 const target = process.argv[2];
