@@ -161,7 +161,7 @@ const PROVIDER_TABLE = [
 "  return null;",
 "}",
 "",
-"function resolveOpenAICompatModel(tier, provider) {",
+"function resolveMultiProviderModel(tier, provider) {",
 "  const cfg = OPENAI_COMPAT_PROVIDERS[provider];",
 "  if (!cfg) return cfg ? cfg.defaultModel : undefined;",
 '  if (tier === "haiku") return cfg.haikuModel || cfg.defaultModel;',
@@ -174,12 +174,14 @@ const PROVIDER_TABLE = [
 if (!code.includes("// --- ruflo multi-provider routing")) {
   code = PROVIDER_TABLE + "\n" + code;
 } else {
-  // Replace old provider table: remove from marker to end of resolveOpenAICompatModel
+  // Replace old provider table: remove from marker to end of our function
   const marker = "// --- ruflo multi-provider routing (setup.sh patch) ---";
   const idx = code.indexOf(marker);
   if (idx !== -1) {
-    // find the closing } of resolveOpenAICompatModel
-    const funcStart = code.indexOf("function resolveOpenAICompatModel", idx);
+    // find the closing } of resolveMultiProviderModel (or legacy resolveOpenAICompatModel)
+    const funcStartNew = code.indexOf("function resolveMultiProviderModel", idx);
+    const funcStartOld = code.indexOf("function resolveOpenAICompatModel", idx);
+    const funcStart = funcStartNew !== -1 ? funcStartNew : funcStartOld;
     if (funcStart !== -1) {
       let braceCount = 0;
       let inFunc = false;
@@ -323,7 +325,7 @@ code = code.replace(
 if (!code.includes("// Multi-provider routing")) {
   code = code.replace(
     /(saveAgentStore\(store\);)(\s*)(const startedAt = Date\.now\(\);)(\s*)(try\s*\{)/,
-    "$1\n\n// Multi-provider routing\nif (__useDS && __dsKey) {\n  const __tier = agent.model || \"sonnet\";\n  const __dsModel = __tier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n  const __dsResult = await callDeepSeekMessages({ prompt: input.prompt, systemPrompt: systemPrompt, model: __dsModel, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs, apiKey: __dsKey });\n  if (__dsResult.success) {\n    agent.status = \"idle\"; agent.lastResult = __dsResult; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __dsResult.messageId, model: __dsResult.model, stopReason: __dsResult.stopReason, output: __dsResult.output, usage: __dsResult.usage, durationMs: __dsResult.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __dsModel, error: __dsResult.error };\n}\n\nif (__useCompat && __compatP) {\n  const __tier = agent.model || \"sonnet\";\n  const __model = resolveOpenAICompatModel(__tier, __compatP.provider);\n  __compatP.chosenModel = __model;\n  const __result = await callOpenAICompat({ prompt: input.prompt, systemPrompt: systemPrompt, model: __model, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs }, __compatP);\n  if (__result.success) {\n    agent.status = \"idle\"; agent.lastResult = __result; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __result.messageId, model: __result.model, stopReason: __result.stopReason, output: __result.output, usage: __result.usage, durationMs: __result.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __model, error: __result.error };\n}\n\n$3$4$5"
+    "$1\n\n// Multi-provider routing\nif (__useDS && __dsKey) {\n  const __tier = agent.model || \"sonnet\";\n  const __dsModel = __tier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n  const __dsResult = await callDeepSeekMessages({ prompt: input.prompt, systemPrompt: systemPrompt, model: __dsModel, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs, apiKey: __dsKey });\n  if (__dsResult.success) {\n    agent.status = \"idle\"; agent.lastResult = __dsResult; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __dsResult.messageId, model: __dsResult.model, stopReason: __dsResult.stopReason, output: __dsResult.output, usage: __dsResult.usage, durationMs: __dsResult.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __dsModel, error: __dsResult.error };\n}\n\nif (__useCompat && __compatP) {\n  const __tier = agent.model || \"sonnet\";\n  const __model = resolveMultiProviderModel(__tier, __compatP.provider);\n  __compatP.chosenModel = __model;\n  const __result = await callOpenAICompat({ prompt: input.prompt, systemPrompt: systemPrompt, model: __model, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs }, __compatP);\n  if (__result.success) {\n    agent.status = \"idle\"; agent.lastResult = __result; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __result.messageId, model: __result.model, stopReason: __result.stopReason, output: __result.output, usage: __result.usage, durationMs: __result.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __model, error: __result.error };\n}\n\n$3$4$5"
   );
 }
 
