@@ -681,6 +681,76 @@ ENDLOCK
   return $rc
 }
 
+# =============================================================================
+# Sync API keys to .claude/settings.json env section
+# mcp.json env field does NOT reliably propagate to MCP subprocess (see Issue #5
+# in docs/ruflo-deepseek-integration-report.md). settings.json env IS inherited
+# by all child processes including MCP servers.
+# =============================================================================
+sync_settings_env() {
+  local env_vars_to_add="$1"  # "KEY=val\nKEY2=val2" format
+
+  if [ -z "$env_vars_to_add" ]; then
+    return 0
+  fi
+
+  local settings_file=".claude/settings.json"
+  if [ ! -f "$settings_file" ]; then
+    warn "settings.json not found — skipping env sync."
+    return 1
+  fi
+
+  SYNC_ENV_SCRIPT=$(safe_mktemp /tmp/ruflo-sync-env.XXXXXX.cjs)
+  cat << 'ENDSYNCENV' > "$SYNC_ENV_SCRIPT"
+const fs = require("fs");
+const target = process.argv[2];
+const extraEnvRaw = process.argv[3] || "";
+
+let data = {};
+try {
+  data = JSON.parse(fs.readFileSync(target, "utf-8"));
+} catch (e) {
+  console.error("Failed to parse settings.json: " + e.message);
+  process.exit(1);
+}
+
+if (!data.env) data.env = {};
+
+let added = 0;
+const lines = extraEnvRaw.split("\n");
+for (const line of lines) {
+  const eqIdx = line.indexOf("=");
+  if (eqIdx <= 0) continue;
+  const key = line.slice(0, eqIdx).trim();
+  const val = line.slice(eqIdx + 1);
+  if (!key || !val) continue;
+  if (data.env[key] === val) continue;  // already set, skip
+  data.env[key] = val;
+  added++;
+}
+
+if (added > 0) {
+  const tmpPath = target + ".tmp." + Date.now();
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+  fs.renameSync(tmpPath, target);
+  console.log("SETTINGS_ENV_OK added=" + added);
+} else {
+  console.log("SETTINGS_ENV_SKIP");
+}
+ENDSYNCENV
+
+  node "$SYNC_ENV_SCRIPT" "$settings_file" "$env_vars_to_add"
+  local rc=$?
+  rm -f "$SYNC_ENV_SCRIPT"
+
+  if [ $rc -eq 0 ]; then
+    ok "Settings env synced — API keys added to .claude/settings.json (reliable MCP inheritance)"
+  else
+    warn "Failed to sync settings.json env (non-fatal)."
+  fi
+  return $rc
+}
+
 # Always target project .mcp.json (priority 2 > ~/.claude.json priority 4)
 # If ~/.claude.json has a ruflo/claude-flow entry, use the SAME server name
 # so project-level overrides user-level — no duplicate MCP server.
@@ -733,6 +803,21 @@ lock_mcp_config "$MCP_FILE" "$MCP_SERVER_NAME" ""
 if [ $? -eq 0 ]; then
   ok "MCP server locked: $MCP_SERVER_NAME → ruflo mcp start (portable)"
   info "Config written to: $MCP_FILE"
+
+  # Sync existing mcp.json env vars to settings.json (reliable MCP inheritance)
+  EXISTING_ENV=$(node -e "
+    const fs = require('fs');
+    try {
+      const d = JSON.parse(fs.readFileSync('.mcp.json', 'utf-8'));
+      const env = (d.mcpServers && d.mcpServers['$MCP_SERVER_NAME'] && d.mcpServers['$MCP_SERVER_NAME'].env) || {};
+      for (const [k, v] of Object.entries(env)) {
+        if (k.endsWith('_API_KEY') && v) console.log(k + '=' + v);
+      }
+    } catch(e) {}
+  " 2>/dev/null)
+  if [ -n "$EXISTING_ENV" ]; then
+    sync_settings_env "$EXISTING_ENV"
+  fi
   if [ -n "$EXISTING_USER_KEY" ]; then
     warn "~/.claude.json has \"$EXISTING_USER_KEY\" — syncing to match project config."
     info "Keeps the entry, switches from npx to global ruflo (方案C: same key → project overrides)."
@@ -987,6 +1072,9 @@ if [ -t 0 ] || [ -c /dev/tty ]; then
       lock_mcp_config "$MCP_FILE" "$MCP_SERVER_NAME" "$ENV_VAR=$APIKEY"
       if [ $? -eq 0 ]; then
         ok "API key saved to $MCP_FILE"
+        # Also sync to settings.json env — mcp.json env doesn't reliably
+        # propagate to MCP subprocess, but settings.json env does (Issue #5)
+        sync_settings_env "$ENV_VAR=$APIKEY"
       else
         warn "Could not auto-save MCP config."
         info "Set it manually: export $ENV_VAR=\"<your-api-key>\""
