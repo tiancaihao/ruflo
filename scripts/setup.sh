@@ -702,10 +702,41 @@ lock_mcp_config "$MCP_FILE" "$MCP_SERVER_NAME" ""
 if [ $? -eq 0 ]; then
   ok "MCP server locked: $MCP_SERVER_NAME → ruflo mcp start (portable)"
   info "Config written to: $MCP_FILE"
+
+  # Clean up user-level ~/.claude.json ruflo entries to prevent scope conflict.
+  # Having the same server name in both project and user scope causes Claude Code
+  # to show "conflicting scopes" warnings. Project .mcp.json is the canonical config.
   if [ -n "$EXISTING_USER_KEY" ]; then
-    warn "~/.claude.json has \"$EXISTING_USER_KEY\" — overridden by project .mcp.json (same key)."
-    warn "Do NOT run 'claude mcp add ruflo' — it will overwrite .mcp.json."
-    warn "If that happens, re-run: bash scripts/setup.sh"
+    warn "~/.claude.json has \"$EXISTING_USER_KEY\" → removing to prevent scope conflict."
+    info "Project .mcp.json now holds the sole ruflo config."
+
+    CLEANUP_SCRIPT=$(safe_mktemp /tmp/ruflo-cleanup.XXXXXX.cjs)
+    cat << 'ENDCLEANUP' > "$CLEANUP_SCRIPT"
+const fs = require("fs");
+const home = process.env.HOME;
+const file = home + "/.claude.json";
+try {
+  const d = JSON.parse(fs.readFileSync(file, "utf-8"));
+  if (d.mcpServers) {
+    for (const k of Object.keys(d.mcpServers)) {
+      if (k.includes("claude-flow") || k.includes("ruflo")) {
+        delete d.mcpServers[k];
+        console.error("Removed from ~/.claude.json: " + k);
+      }
+    }
+    if (Object.keys(d.mcpServers).length === 0) delete d.mcpServers;
+    fs.writeFileSync(file, JSON.stringify(d, null, 2), "utf-8");
+    console.log("CLEANUP_OK");
+  }
+} catch(e) { console.error(e.message); }
+ENDCLEANUP
+
+    if node "$CLEANUP_SCRIPT" 2>/dev/null; then
+      ok "Cleaned up ~/.claude.json — no more scope conflict."
+    else
+      warn "Could not clean up ~/.claude.json. You may want to remove ruflo entries manually."
+    fi
+    rm -f "$CLEANUP_SCRIPT"
   fi
 else
   warn "Could not lock MCP config. You may need to re-run setup."
