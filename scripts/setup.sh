@@ -703,9 +703,58 @@ if [ $? -eq 0 ]; then
   ok "MCP server locked: $MCP_SERVER_NAME → ruflo mcp start (portable)"
   info "Config written to: $MCP_FILE"
   if [ -n "$EXISTING_USER_KEY" ]; then
-    warn "~/.claude.json has \"$EXISTING_USER_KEY\" — overridden by project .mcp.json (same key)."
-    warn "Do NOT run 'claude mcp add ruflo' — it will overwrite .mcp.json."
-    warn "If that happens, re-run: bash scripts/setup.sh"
+    warn "~/.claude.json has \"$EXISTING_USER_KEY\" — syncing to match project config."
+    info "Keeps the entry, switches from npx to global ruflo (方案C: same key → project overrides)."
+
+    SYNC_SCRIPT=$(safe_mktemp /tmp/ruflo-sync-user.XXXXXX.cjs)
+    cat << 'ENDSYNC' > "$SYNC_SCRIPT"
+const fs = require("fs");
+const home = process.env.HOME;
+const file = home + "/.claude.json";
+try {
+  const d = JSON.parse(fs.readFileSync(file, "utf-8"));
+  let updated = 0;
+
+  // Update top-level mcpServers entries (user scope)
+  if (d.mcpServers) {
+    for (const k of Object.keys(d.mcpServers)) {
+      if (k.includes("claude-flow") || k.includes("ruflo")) {
+        d.mcpServers[k].command = "ruflo";
+        d.mcpServers[k].args = ["mcp", "start"];
+        updated++;
+      }
+    }
+  }
+
+  // Update per-project entries (the "local" scope in Claude Code)
+  for (const key of Object.keys(d)) {
+    if (key.startsWith("/") && d[key].mcpServers) {
+      for (const k of Object.keys(d[key].mcpServers)) {
+        if (k.includes("claude-flow") || k.includes("ruflo")) {
+          d[key].mcpServers[k].command = "ruflo";
+          d[key].mcpServers[k].args = ["mcp", "start"];
+          updated++;
+        }
+      }
+    }
+  }
+
+  if (updated > 0) {
+    fs.writeFileSync(file, JSON.stringify(d, null, 2), "utf-8");
+    console.log("SYNC_OK " + updated + " entries");
+  } else {
+    console.log("SYNC_SKIP");
+  }
+} catch(e) { console.error(e.message); }
+ENDSYNC
+
+    RESULT=$(node "$SYNC_SCRIPT" 2>/dev/null)
+    rm -f "$SYNC_SCRIPT"
+    if echo "$RESULT" | grep -q "SYNC_OK"; then
+      ok "~/.claude.json synced — no more conflicting endpoints."
+    else
+      info "~/.claude.json not modified (already consistent or no entries)."
+    fi
   fi
 else
   warn "Could not lock MCP config. You may need to re-run setup."
