@@ -65,7 +65,28 @@ else
 fi
 
 # =============================================================================
-# Step 3: Find target file for patching (prefer global install)
+# Step 3: Clean corrupted npx caches (left by old setup.sh versions)
+# Old versions patched npx cache files, causing SyntaxError on npx ruflo@latest.
+# We now patch global install only, so stale npx caches must be purged.
+# =============================================================================
+info "Checking npx cache for stale patches..."
+NUKED=0
+for cache_dir in ~/.npm/_npx/*/; do
+  [ -d "$cache_dir" ] 2>/dev/null || continue
+  TARGET="$cache_dir/node_modules/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js"
+  if [ -f "$TARGET" ] && grep -q "ruflo multi-provider routing" "$TARGET" 2>/dev/null; then
+    rm -rf "$cache_dir"
+    NUKED=$((NUKED + 1))
+  fi
+done
+if [ $NUKED -gt 0 ]; then
+  warn "Removed $NUKED stale npx cache(s) — they had old patches that would break npx ruflo@latest."
+else
+  ok "npx cache clean."
+fi
+
+# =============================================================================
+# Step 4: Find target file for patching (global install only, never npx cache)
 # =============================================================================
 
 # Search for agent-execute-core.js, prefer global install over npx cache.
@@ -97,12 +118,12 @@ fi
 
 info "Found target: $TARGET_FILE"
 
-# Step 3: Create backup
+# Step 5: Create backup
 BACKUP="$TARGET_FILE.bak.$(date +%s)"
 cp "$TARGET_FILE" "$BACKUP"
 info "Backup created at $BACKUP"
 
-# Step 4: Apply L1 multi-provider patch (idempotent — safe to re-run)
+# Step 6: Apply L1 multi-provider patch (idempotent — safe to re-run)
 info "Patching agent-execute-core.js with multi-provider routing..."
 
 PATCH_SCRIPT=$(safe_mktemp /tmp/ruflo-patch.XXXXXX.cjs)
@@ -343,7 +364,7 @@ if [ $PATCH_EXIT -ne 0 ]; then
     exit 1
 fi
 
-# Step 6: Verify the L1 multi-provider patch
+# Step 7: Verify the L1 multi-provider patch
 if grep -q "OPENAI_COMPAT_PROVIDERS" "$TARGET_FILE"; then
     ok "Multi-provider routing (L1) installed successfully!"
 else
@@ -354,7 +375,7 @@ else
 fi
 
 # =============================================================================
-# Step 6: Layer 2 fix — Patch agent-wasm.js to allow DEEPSEEK_API_KEY
+# Step 8: Layer 2 fix — Patch agent-wasm.js to allow DEEPSEEK_API_KEY
 # =============================================================================
 BASE_DIR=$(dirname "$TARGET_FILE")                    # .../mcp-tools/
 DIST_DIR=$(dirname "$BASE_DIR")                       # .../dist/src/
@@ -401,7 +422,7 @@ else
 fi
 
 # =============================================================================
-# Step 8: Download & copy local-agent-loop.js into npx cache
+# Step 9: Download & copy local-agent-loop.js into npx cache
 # =============================================================================
 LOOP_TMP=$(safe_mktemp /tmp/local-agent-loop.XXXXXX.cjs)
 
@@ -424,7 +445,7 @@ ok "local-agent-loop.js installed."
 rm -f "$LOOP_TMP"
 
 # =============================================================================
-# Step 9: Download & copy local-agent-tools.js into npx cache
+# Step 10: Download & copy local-agent-tools.js into npx cache
 # =============================================================================
 TOOLS_TMP=$(safe_mktemp /tmp/local-agent-tools.XXXXXX.cjs)
 
@@ -446,7 +467,7 @@ ok "local-agent-tools.js installed."
 rm -f "$TOOLS_TMP"
 
 # =============================================================================
-# Step 10: Register localAgentTools in mcp-tools/index.js
+# Step 11: Register localAgentTools in mcp-tools/index.js
 # =============================================================================
 INDEX_FILE="$BASE_DIR/index.js"
 if [ -f "$INDEX_FILE" ]; then
@@ -489,7 +510,7 @@ else
 fi
 
 # =============================================================================
-# Step 11: Final verification
+# Step 12: Final verification
 # =============================================================================
 echo ""
 ok "Ruflo multi-provider setup complete!"
@@ -518,7 +539,7 @@ echo "  overwritten. Just re-run this script: bash scripts/setup.sh"
 echo ""
 
 # =============================================================================
-# Step 11.5: Lock MCP server to global ruflo (always — even without API key)
+# Step 13: Lock MCP server to global ruflo (always — even without API key)
 # Uses "ruflo mcp start" (portable, no machine-specific paths) in .mcp.json
 # Re-run setup.sh after "npm update -g ruflo" to re-apply patches.
 # =============================================================================
@@ -690,7 +711,7 @@ else
   warn "Could not lock MCP config. You may need to re-run setup."
 fi
 # =============================================================================
-# Step 12: Interactive provider configuration
+# Step 14: Interactive provider configuration
 # =============================================================================
 
 PROVIDER_NAMES=("DeepSeek" "Qwen (DashScope)" "Kimi (Moonshot)" "Zhipu (BigModel/GLM)" "Doubao (Ark/ByteDance)")
