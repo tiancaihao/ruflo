@@ -13,7 +13,7 @@
 - [x] 3.1 Modify `find_target_file` to return ALL matching files instead of first match (`find ... -type f` without `head -1`)
 - [x] 3.2 Loop through all discovered target files in Step 6 (L1) and Step 8 (L2), applying patches to each
 - [x] 3.3 Keep npx cache exclusion (delete stale caches, don't patch them)
-- [ ] 3.4 Verify nested `.../cli/node_modules/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js` is patched
+- [x] 3.4 Verify nested `.../cli/node_modules/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js` is patched
 
 ## 4. Fix WASM echo detection for object return format (Bug #7)
 
@@ -23,7 +23,7 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run setup.sh twice on clean install, verify no SyntaxError from duplicate declarations
+- [x] 5.1 Run setup.sh twice on clean install, verify no SyntaxError from duplicate declarations
 - [ ] 5.2 Verify `agent_execute` works with only `DEEPSEEK_API_KEY` set (no `ANTHROPIC_API_KEY`)
 - [ ] 5.3 Verify `wasm_agent_prompt` works with only `DEEPSEEK_API_KEY` set
-- [ ] 5.4 Verify nested `node_modules` copies are patched identically to main copy
+- [x] 5.4 Verify nested `node_modules` copies are patched identically to main copy
