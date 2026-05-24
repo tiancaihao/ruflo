@@ -68,7 +68,8 @@ fi
 # Step 3: Find target file for patching (prefer global install)
 # =============================================================================
 
-# Search for agent-execute-core.js, prefer global install (portable, no hash changes)
+# Search for agent-execute-core.js, prefer global install over npx cache.
+# Global install paths are stable; npx cache has hash-based paths that change on update.
 find_target_file() {
   for search_dir in \
     "$(npm root -g 2>/dev/null)" \
@@ -77,11 +78,13 @@ find_target_file() {
     ~/.npm/_npx; \
   do
     [ -d "$search_dir" ] 2>/dev/null || continue
-    find "$search_dir" -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null
-  done | while read f; do
-    depth=$(echo "$f" | tr -cd '/' | wc -c)
-    echo "$depth $f"
-  done | sort -n | head -1 | awk '{print $2}'
+    result=$(find "$search_dir" -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null | head -1)
+    if [ -n "$result" ]; then
+      echo "$result"
+      return 0
+    fi
+  done
+  return 1
 }
 
 TARGET_FILE=$(find_target_file)
