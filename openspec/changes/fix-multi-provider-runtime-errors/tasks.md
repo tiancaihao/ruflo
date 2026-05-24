@@ -19,11 +19,11 @@
 
 - [x] 4.1 Add object format compatibility in Step 8 (L2 WASM patch): extract `rawResponse` from `wasmResult.response` or `wasmResult.text` fallback
 - [x] 4.2 Use `rawResponse` for echo pattern matching instead of `wasmResult` directly
-- [ ] 4.3 Verify `wasm_agent_prompt` routes through LLM when WASM returns `{response: "echo: ..."}`
+- [ ] 4.3 Verify `wasm_agent_prompt` routes through LLM when WASM returns `{response: "echo: ..."}` (logic verified via standalone test, needs MCP integration test)
 
 ## 5. Verification
 
 - [x] 5.1 Run setup.sh twice on clean install, verify no SyntaxError from duplicate declarations
-- [ ] 5.2 Verify `agent_execute` works with only `DEEPSEEK_API_KEY` set (no `ANTHROPIC_API_KEY`)
-- [ ] 5.3 Verify `wasm_agent_prompt` works with only `DEEPSEEK_API_KEY` set
+- [ ] 5.2 Verify `agent_execute` works with only `DEEPSEEK_API_KEY` set (no `ANTHROPIC_API_KEY`) — routing code verified, needs live API test
+- [ ] 5.3 Verify `wasm_agent_prompt` works with only `DEEPSEEK_API_KEY` set — routing code verified, needs live API test
 - [x] 5.4 Verify nested `node_modules` copies are patched identically to main copy
