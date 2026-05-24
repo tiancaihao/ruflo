@@ -804,7 +804,9 @@ print_manual_guide() {
 }
 
 # ---- TTY detection: skip interactive menu in non-TTY (pipe, CI) ----
-if [ -t 0 ]; then
+# Check stdin OR /dev/tty — curl|bash makes stdin a pipe, but /dev/tty
+# still works because interactive_select() redirects from it.
+if [ -t 0 ] || [ -c /dev/tty ]; then
   echo ""
   echo "  ╔══════════════════════════════════════════════════╗"
   echo "  ║     API Provider Configuration Wizard           ║"
