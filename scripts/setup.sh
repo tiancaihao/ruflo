@@ -5,24 +5,16 @@ set -euo pipefail
 # ruflo multi-provider setup — one-command onboarding
 # =============================================================================
 #
-# Downloads the latest ruflo CLI via npx and patches the compiled
-# agent-execute-core.js with multi-provider LLM routing so you can
-# use DeepSeek, Qwen, Kimi, Zhipu, or Doubao instead of Anthropic.
+# Installs ruflo globally and patches agent-execute-core.js with multi-provider
+# LLM routing so you can use DeepSeek, Qwen, Kimi, Zhipu, or Doubao instead of
+# Anthropic.
 #
-# Also adds local_agent_* MCP tools (L3 local agent loop) and fixes
-# the Layer 2 WASM Agent ANTHROPIC_API_KEY pre-check.
+# .mcp.json uses "ruflo mcp start" (portable, no machine-specific paths).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tiancaihao/ruflo/main/scripts/setup.sh | bash
 #
-# After setup, set ONE of these env vars in .claude/settings.json:
-#   DEEPSEEK_API_KEY  (DeepSeek — highest priority)
-#   DASHSCOPE_API_KEY (Qwen / DashScope)
-#   MOONSHOT_API_KEY  (Kimi / Moonshot)
-#   ZHIPU_API_KEY     (Zhipu / BigModel)
-#   ARK_API_KEY       (Doubao / Ark)
-#
-# Or use RUFLO_PROVIDER=<name> to explicitly choose a provider.
+# After setup, the API key is stored in .mcp.json under mcpServers.ruflo.env:
 # =============================================================================
 
 RED='\033[0;31m'
@@ -46,18 +38,47 @@ safe_mktemp() {
 
 info "Starting multi-provider setup..."
 
-# Search for agent-execute-core.js, prefer shallowest path (avoids nested node_modules copies)
+# =============================================================================
+# Step 1: Ensure ruflo is available globally (required for "ruflo mcp start")
+# =============================================================================
+if ! command -v ruflo &>/dev/null; then
+  info "ruflo not found in PATH. Installing globally via npm..."
+  npm install -g ruflo@latest || {
+    err "npm install -g ruflo@latest failed. Check your npm permissions or try:"
+    err "  sudo npm install -g ruflo@latest"
+    exit 1
+  }
+  ok "ruflo installed globally."
+else
+  ok "ruflo already installed: $(which ruflo)"
+fi
+
+# =============================================================================
+# Step 2: Initialize project (always, idempotent — --force re-inits safely)
+# Creates .mcp.json with "npx ruflo@latest mcp start" (we'll replace later)
+# =============================================================================
+info "Initializing ruflo project..."
+if ruflo init --force 2>/dev/null; then
+  ok "ruflo project initialized."
+else
+  warn "ruflo init had warnings (non-fatal). Continuing..."
+fi
+
+# =============================================================================
+# Step 3: Find target file for patching (prefer global install)
+# =============================================================================
+
+# Search for agent-execute-core.js, prefer global install (portable, no hash changes)
 find_target_file() {
   for search_dir in \
-    ~/.npm/_npx \
     "$(npm root -g 2>/dev/null)" \
     ~/.nvm/versions/node/*/lib/node_modules \
-    /usr/local/lib/node_modules; \
+    /usr/local/lib/node_modules \
+    ~/.npm/_npx; \
   do
     [ -d "$search_dir" ] 2>/dev/null || continue
     find "$search_dir" -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null
   done | while read f; do
-    # Sort by path depth (fewer slashes = shallower = higher priority)
     depth=$(echo "$f" | tr -cd '/' | wc -c)
     echo "$depth $f"
   done | sort -n | head -1 | awk '{print $2}'
@@ -66,19 +87,9 @@ find_target_file() {
 TARGET_FILE=$(find_target_file)
 
 if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
-    info "ruflo not found. Running npx ruflo init..."
-    npx -y ruflo@latest init || {
-        err "ruflo init failed. Please check your network and try again."
-        exit 1
-    }
-
-    TARGET_FILE=$(find_target_file)
-
-    if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
-        err "Could not find agent-execute-core.js after init."
-        err "Try running: npx ruflo init"
-        exit 1
-    fi
+    err "Could not find agent-execute-core.js after global install."
+    err "Try running: npm install -g ruflo@latest"
+    exit 1
 fi
 
 info "Found target: $TARGET_FILE"
@@ -483,6 +494,12 @@ echo "  L1: agent_execute → multi-provider routing (DeepSeek, Qwen, Kimi, Zhip
 echo "  L2: wasm_agent_*  → DEEPSEEK_API_KEY accepted (no longer Anthropic-only)"
 echo "  L3: local_agent_* → Local agent loop via DeepSeek/Qwen function calling"
 echo ""
+info "MCP config: .mcp.json → ruflo mcp start (portable)"
+echo ""
+warn "IMPORTANT: Do NOT run 'claude mcp add ruflo' after this setup —"
+echo "  it will overwrite the patched config. If you accidentally do,"
+echo "  just re-run this script: curl -fsSL ... | bash"
+echo ""
 info "Tools available:"
 echo "  local_agent_create     — Create a new local agent"
 echo "  local_agent_prompt     — Run a task (supports async: true)"
@@ -491,13 +508,189 @@ echo "  local_agent_events     — View full transcript"
 echo "  local_agent_list       — List all local agents"
 echo "  local_agent_terminate  — Stop and clean up"
 echo ""
+info "Note: If you update ruflo globally (npm update -g ruflo), patches may be"
+echo "  overwritten. Just re-run this script: bash scripts/setup.sh"
+echo ""
+
+# =============================================================================
+# Step 11.5: Lock MCP server to global ruflo (always — even without API key)
+# Uses "ruflo mcp start" (portable, no machine-specific paths) in .mcp.json
+# Re-run setup.sh after "npm update -g ruflo" to re-apply patches.
+# =============================================================================
+
+lock_mcp_config() {
+  local mcp_file="$1"
+  local server_name="$2"      # server name to use (e.g. "ruflo" or "claude-flow")
+  local env_vars_to_add="$3"  # optional: "KEY=val" pairs to merge into env
+
+  if ! command -v ruflo &>/dev/null; then
+    warn "ruflo not found in PATH — cannot write portable MCP config."
+    warn "Install it globally: npm install -g ruflo@latest"
+    return 1
+  fi
+
+  LOCK_SCRIPT=$(safe_mktemp /tmp/ruflo-mcp-lock.XXXXXX.cjs)
+  cat << 'ENDLOCK' > "$LOCK_SCRIPT"
+const fs = require("fs");
+const target = process.argv[2];
+const forceServerName = process.argv[3] || "";
+const extraEnvRaw = process.argv[4] || "";  // KEY1=val1\nKEY2=val2
+
+let data = { mcpServers: {} };
+try {
+  if (fs.existsSync(target)) {
+    data = JSON.parse(fs.readFileSync(target, "utf-8"));
+  }
+} catch (e) {
+  console.error("Failed to parse " + target + ": " + e.message);
+  process.exit(1);
+}
+
+if (!data.mcpServers) data.mcpServers = {};
+
+// Use forced server name if provided, otherwise auto-detect
+let serverName = forceServerName || null;
+let existingCfg = data.mcpServers[serverName] || null;
+
+if (!serverName) {
+  // Auto-detect: find existing ruflo or claude-flow key
+  for (const [name, cfg] of Object.entries(data.mcpServers)) {
+    const cmd = (cfg.command || "") + " " + (cfg.args || []).join(" ");
+    if (cmd.includes("ruflo") || cmd.includes("claude-flow") ||
+        name.includes("claude-flow") || name.includes("ruflo")) {
+      serverName = name;
+      existingCfg = cfg;
+      break;
+    }
+  }
+}
+
+if (!serverName) {
+  serverName = "ruflo";
+}
+
+// Merge existing env with new env vars
+let mergedEnv = {};
+if (existingCfg && existingCfg.env && typeof existingCfg.env === "object") {
+  Object.assign(mergedEnv, existingCfg.env);
+}
+if (extraEnvRaw) {
+  for (const line of extraEnvRaw.split("\n")) {
+    const eqIdx = line.indexOf("=");
+    if (eqIdx > 0) {
+      mergedEnv[line.slice(0, eqIdx)] = line.slice(eqIdx + 1);
+    }
+  }
+}
+
+// Portable config — uses global "ruflo" command, no machine-specific paths
+const newCfg = {
+  command: "ruflo",
+  args: ["mcp", "start"],
+};
+
+// Only set env if we have vars (avoid empty env: {})
+if (Object.keys(mergedEnv).length > 0) {
+  newCfg.env = mergedEnv;
+}
+
+// Preserve autoStart if it existed
+if (existingCfg && typeof existingCfg.autoStart === "boolean") {
+  newCfg.autoStart = existingCfg.autoStart;
+}
+
+data.mcpServers[serverName] = newCfg;
+
+// Clean up the OTHER possible key to prevent duplicates in this file
+// (e.g. if we're writing "ruflo", remove stale "claude-flow" and vice versa)
+const otherKeys = serverName === "ruflo" ? ["claude-flow"] : ["ruflo"];
+for (const stale of otherKeys) {
+  if (data.mcpServers[stale]) {
+    console.error("Removed stale key from " + target + ": " + stale);
+    delete data.mcpServers[stale];
+  }
+}
+
+// Atomic write
+const tmpPath = target + ".tmp." + Date.now();
+fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
+fs.renameSync(tmpPath, target);
+
+console.log("MCP_CONFIG_OK server=" + serverName + " file=" + target + " cmd=ruflo");
+ENDLOCK
+
+  node "$LOCK_SCRIPT" "$mcp_file" "$server_name" "$env_vars_to_add"
+  local rc=$?
+  rm -f "$LOCK_SCRIPT"
+  return $rc
+}
+
+# Always target project .mcp.json (priority 2 > ~/.claude.json priority 4)
+# If ~/.claude.json has a ruflo/claude-flow entry, use the SAME server name
+# so project-level overrides user-level — no duplicate MCP server.
+MCP_FILE=".mcp.json"
+MCP_SERVER_NAME="ruflo"
+
+# Detect if ~/.claude.json has a ruflo/claude-flow entry
+if [ -f "$HOME/.claude.json" ]; then
+  EXISTING_USER_KEY=$(node -e "
+    const fs = require('fs');
+    try {
+      const d = JSON.parse(fs.readFileSync(process.env.HOME + '/.claude.json', 'utf-8'));
+      const servers = d.mcpServers || {};
+      for (const k of Object.keys(servers)) {
+        if (k.includes('claude-flow') || k.includes('ruflo')) { console.log(k); process.exit(0); }
+      }
+    } catch(e) {}
+  " 2>/dev/null)
+
+  if [ -n "$EXISTING_USER_KEY" ]; then
+    MCP_SERVER_NAME="$EXISTING_USER_KEY"
+    warn "Detected user-level MCP entry in ~/.claude.json: \"$EXISTING_USER_KEY\""
+    info "Project .mcp.json will use the same name → project config overrides user config."
+    info "~/.claude.json entry is NOT deleted — just overridden by project .mcp.json."
+  fi
+fi
+
+# Check project .mcp.json for existing ruflo key — only use if no user-level key
+# (user-level key name takes priority to ensure override works)
+if [ -z "$EXISTING_USER_KEY" ] && [ -f ".mcp.json" ]; then
+  EXISTING_PROJ_KEY=$(node -e "
+    const fs = require('fs');
+    try {
+      const d = JSON.parse(fs.readFileSync('.mcp.json', 'utf-8'));
+      const servers = d.mcpServers || {};
+      for (const k of Object.keys(servers)) {
+        if (k.includes('claude-flow') || k.includes('ruflo')) { console.log(k); process.exit(0); }
+      }
+    } catch(e) {}
+  " 2>/dev/null)
+
+  if [ -n "$EXISTING_PROJ_KEY" ]; then
+    MCP_SERVER_NAME="$EXISTING_PROJ_KEY"
+  fi
+fi
+
+# Always lock MCP command to portable "ruflo mcp start" (without API key for now)
+lock_mcp_config "$MCP_FILE" "$MCP_SERVER_NAME" ""
+if [ $? -eq 0 ]; then
+  ok "MCP server locked: $MCP_SERVER_NAME → ruflo mcp start (portable)"
+  info "Config written to: $MCP_FILE"
+  if [ -n "$EXISTING_USER_KEY" ]; then
+    warn "~/.claude.json has \"$EXISTING_USER_KEY\" — overridden by project .mcp.json (same key)."
+    warn "Do NOT run 'claude mcp add ruflo' — it will overwrite .mcp.json."
+    warn "If that happens, re-run: bash scripts/setup.sh"
+  fi
+else
+  warn "Could not lock MCP config. You may need to re-run setup."
+fi
 # =============================================================================
 # Step 12: Interactive provider configuration
 # =============================================================================
 
 PROVIDER_NAMES=("DeepSeek" "Qwen (DashScope)" "Kimi (Moonshot)" "Zhipu (BigModel/GLM)" "Doubao (Ark/ByteDance)")
 PROVIDER_VARS=("DEEPSEEK_API_KEY" "DASHSCOPE_API_KEY" "MOONSHOT_API_KEY" "ZHIPU_API_KEY" "ARK_API_KEY")
-PROVIDER_URLS=("https://api.deepseek.com/v1/models" "https://dashscope.aliyuncs.com/api/v1/models" "https://api.moonshot.cn/v1/models" "https://open.bigmodel.cn/api/paas/v4/models" "https://ark.cn-beijing.volces.com/api/v3/models")
+PROVIDER_URLS=("https://api.deepseek.com/v1/models" "https://dashscope.aliyuncs.com/compatible-mode/v1/models" "https://api.moonshot.cn/v1/models" "https://open.bigmodel.cn/api/paas/v4/models" "https://ark.cn-beijing.volces.com/api/v3/models")
 PROVIDER_MODELS=("deepseek-v4-flash" "qwen3.6-plus" "kimi-k2.5" "glm-4.6" "doubao-seed-1.6")
 
 # Node.js-powered interactive select (arrow-key navigation, Enter to confirm)
@@ -597,13 +790,14 @@ test_connectivity() {
 print_manual_guide() {
   echo ""
   info "Manual API key configuration:"
-  echo "  1. Set one of these env vars in .claude/settings.json under the MCP server config:"
+  echo "  1. Add one of these env vars to .mcp.json under mcpServers.ruflo.env:"
   for i in "${!PROVIDER_NAMES[@]}"; do
     printf "     %-20s → %s\n" "${PROVIDER_VARS[$i]}" "${PROVIDER_NAMES[$i]}"
   done
-  echo "  2. Optional: MAX_CONCURRENT_LOCAL_AGENTS=5 (default: 3)"
-  echo "  3. Restart Claude Code (or reload the MCP server)"
-  echo "  4. Test: local_agent_create + local_agent_prompt"
+  echo "  2. Or set the env var in your shell profile (~/.zshrc or ~/.bashrc)"
+  echo "  3. Optional: MAX_CONCURRENT_LOCAL_AGENTS=5 (default: 3)"
+  echo "  4. Restart Claude Code (or reload the MCP server)"
+  echo "  5. Test: local_agent_create + local_agent_prompt"
 }
 
 # ---- TTY detection: skip interactive menu in non-TTY (pipe, CI) ----
@@ -681,94 +875,13 @@ if [ -t 0 ]; then
       ok "Connection successful! (HTTP $HTTP_CODE) — API key is valid."
       echo ""
 
-      # Lock MCP server to patched files (avoid npx re-downloading unpatchched code)
-      CLAUDE_JSON="$HOME/.claude.json"
-      MCP_SERVER="${TARGET_FILE%\/dist\/src\/mcp-tools\/agent-execute-core.js}/bin/mcp-server.js"
-      if [ -f "$MCP_SERVER" ]; then
-        MCP_PATCH=$(safe_mktemp /tmp/ruflo-mcp-env.XXXXXX.cjs)
-        cat << 'ENDMCPPATCH' > "$MCP_PATCH"
-const fs = require("fs");
-const target = process.argv[2];
-const envVar = process.argv[3];
-const apiKey = process.argv[4];
-const mcpServer = process.argv[5];
-
-let data;
-try {
-  data = JSON.parse(fs.readFileSync(target, "utf-8"));
-} catch (e) {
-  console.error("Failed to parse " + target + ": " + e.message);
-  process.exit(1);
-}
-
-if (!data.mcpServers) data.mcpServers = {};
-
-// Find existing ruflo/claude-flow server
-let serverName = null;
-let existingCfg = null;
-for (const [name, cfg] of Object.entries(data.mcpServers)) {
-  const cmd = (cfg.command || "") + " " + (cfg.args || []).join(" ");
-  if (cmd.includes("ruflo") || cmd.includes("claude-flow") || name.includes("claude-flow") || name.includes("ruflo")) {
-    serverName = name;
-    existingCfg = cfg;
-    break;
-  }
-}
-
-// Collect existing env vars from bash -c wrapper (for multi-provider support)
-let envVars = {};
-if (existingCfg && existingCfg.command === "bash" && existingCfg.args && existingCfg.args[0] === "-c") {
-  const cmdStr = existingCfg.args[1] || "";
-  const matches = cmdStr.matchAll(/(\w+)=('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\S+)/g);
-  for (const m of matches) {
-    let val = m[2].replace(/^['"]|['"]$/g, '');
-    envVars[m[1]] = val;
-  }
-}
-if (existingCfg && existingCfg.env) {
-  Object.assign(envVars, existingCfg.env);
-}
-
-// Set the new key
-envVars[envVar] = apiKey;
-
-// Build bash -c with env vars + exec node to patched MCP server
-const envStr = Object.entries(envVars)
-  .map(([k, v]) => k + "='" + v.replace(/'/g, "'\\''") + "'")
-  .join(" ");
-const cmd = envStr + " exec node " + mcpServer;
-
-if (!serverName) {
-  serverName = "claude-flow";
-}
-data.mcpServers[serverName] = {
-  command: "bash",
-  args: ["-c", cmd]
-};
-delete data.mcpServers[serverName].env;
-
-const tmpPath = target + ".tmp." + Date.now();
-fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), "utf-8");
-fs.renameSync(tmpPath, target);
-
-console.log("MCP server locked to patched files: " + mcpServer);
-console.log("Wrote " + envVar + " to MCP server '" + serverName + "'");
-ENDMCPPATCH
-
-        node "$MCP_PATCH" "$CLAUDE_JSON" "$ENV_VAR" "$APIKEY" "$MCP_SERVER"
-        PATCH_EXIT=$?
-        rm -f "$MCP_PATCH"
-
-        if [ $PATCH_EXIT -eq 0 ]; then
-          ok "API key saved. MCP server locked to patched files."
-        else
-          warn "Could not auto-save MCP config."
-          info "Add this manually to ~/.claude.json:"
-          echo "    export $ENV_VAR=\"<your-api-key>\""
-        fi
+      # Add API key to already-locked MCP config
+      lock_mcp_config "$MCP_FILE" "$MCP_SERVER_NAME" "$ENV_VAR=$APIKEY"
+      if [ $? -eq 0 ]; then
+        ok "API key saved to $MCP_FILE"
       else
-        warn "mcp-server.js not found at $MCP_SERVER — MCP config not updated."
-        info "You may need to re-run setup after running 'npx ruflo init'."
+        warn "Could not auto-save MCP config."
+        info "Set it manually: export $ENV_VAR=\"<your-api-key>\""
       fi
 
       # ---- Doctor summary ----
@@ -781,10 +894,11 @@ ENDMCPPATCH
       echo "    API key:        $MASKED  ✓ verified"
       echo "    Default model:  $DEFAULT_MODEL"
       echo "    Env var:        $ENV_VAR"
-      if [ -f "$CLAUDE_JSON" ] && [ $PATCH_EXIT -eq 0 ]; then
-        echo "    Config file:    $CLAUDE_JSON"
-        echo "    MCP server:     claude-flow"
-      fi
+      echo "    Config file:    $MCP_FILE"
+      echo "    MCP server:     ruflo mcp start (portable)"
+      echo ""
+      warn "Do NOT run 'claude mcp add ruflo' — it will overwrite this config."
+      echo "  If you accidentally do, re-run: bash scripts/setup.sh"
       echo ""
       info "Next: Restart Claude Code, then test with:"
       echo "  local_agent_create → local_agent_prompt"
