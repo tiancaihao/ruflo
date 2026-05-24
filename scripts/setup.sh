@@ -850,7 +850,7 @@ if [ -t 0 ] || [ -c /dev/tty ]; then
 
   while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
     echo ""
-    read -s -p "  API key (input hidden): " APIKEY
+    read -s -p "  API key (input hidden): " APIKEY </dev/tty
     echo ""
 
     if [ -z "$APIKEY" ]; then
