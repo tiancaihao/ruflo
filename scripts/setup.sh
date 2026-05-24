@@ -91,37 +91,41 @@ fi
 
 # Search for agent-execute-core.js, prefer global install over npx cache.
 # Global install paths are stable; npx cache has hash-based paths that change on update.
-find_target_file() {
+# Returns ALL matching files (including nested node_modules copies). npx cache excluded — handled by Step 3.
+find_target_files() {
   for search_dir in \
     "$(npm root -g 2>/dev/null)" \
     ~/.nvm/versions/node/*/lib/node_modules \
-    /usr/local/lib/node_modules \
-    ~/.npm/_npx; \
+    /usr/local/lib/node_modules; \
   do
     [ -d "$search_dir" ] 2>/dev/null || continue
-    result=$(find "$search_dir" -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null | head -1)
-    if [ -n "$result" ]; then
-      echo "$result"
-      return 0
-    fi
+    find "$search_dir" -path "*/@claude-flow/cli/dist/src/mcp-tools/agent-execute-core.js" -type f 2>/dev/null
   done
-  return 1
 }
 
-TARGET_FILE=$(find_target_file)
+TARGET_FILES=$(find_target_files)
 
-if [ -z "$TARGET_FILE" ] || [ ! -f "$TARGET_FILE" ]; then
+if [ -z "$TARGET_FILES" ]; then
     err "Could not find agent-execute-core.js after global install."
     err "Try running: npm install -g ruflo@latest"
     exit 1
 fi
 
-info "Found target: $TARGET_FILE"
+# Save first target as MAIN_TARGET_FILE for Steps 9-11 (local-agent tools, index registration)
+MAIN_TARGET_FILE=$(echo "$TARGET_FILES" | head -1)
+MAIN_BASE_DIR=$(dirname "$MAIN_TARGET_FILE")
 
-# Step 5: Create backup
-BACKUP="$TARGET_FILE.bak.$(date +%s)"
-cp "$TARGET_FILE" "$BACKUP"
-info "Backup created at $BACKUP"
+info "Found $(echo "$TARGET_FILES" | wc -l | tr -d ' ') target file(s):"
+for f in $TARGET_FILES; do info "  - $f"; done
+
+# Step 5-8: Patch all copies (loop)
+for TARGET_FILE in $TARGET_FILES; do
+  [ -z "$TARGET_FILE" ] && continue
+
+  # Step 5: Create backup
+  BACKUP="$TARGET_FILE.bak.$(date +%s)"
+  cp "$TARGET_FILE" "$BACKUP"
+  info "Backup created at $BACKUP"
 
 # Step 6: Apply L1 multi-provider patch (idempotent — safe to re-run)
 info "Patching agent-execute-core.js with multi-provider routing..."
@@ -329,9 +333,11 @@ if (!code.includes("// Multi-provider: check for DeepSeek or OpenAI-compat keys"
 }
 
 // Update the API key check to allow multi-provider (split into simple replacements to avoid nested-brace regex issues)
+// Idempotent: only inject __hasOther if not already present (prevents duplicate const on re-run)
+if (!code.includes("const __hasOther")) {
 code = code.replace(
   /const anthropicKey = process\.env\.ANTHROPIC_API_KEY;/,
-  "const anthropicKey = process.env.ANTHROPIC_API_KEY; const __hasOther = __useDS || __useCompat || process.env.OLLAMA_API_KEY;"
+  "const anthropicKey = process.env.ANTHROPIC_API_KEY; const __hasOther = __deepseekKey || __compat || process.env.OLLAMA_API_KEY;"
 );
 code = code.replace(
   /if\s*\(!anthropicKey\)/,
@@ -341,6 +347,7 @@ code = code.replace(
   /'No LLM provider configured. Set ANTHROPIC_API_KEY \(Tier-3\), OPENROUTER_API_KEY \(#2042\), or OLLAMA_API_KEY \(Tier-2 — #1725\).'/,
   "'No LLM provider configured. Set DEEPSEEK_API_KEY, DASHSCOPE_API_KEY (Qwen), MOONSHOT_API_KEY (Kimi), ZHIPU_API_KEY (GLM), ARK_API_KEY (Doubao), OLLAMA_API_KEY, or ANTHROPIC_API_KEY.'"
 );
+}
 
 // Only add routing block if not already present (idempotent)
 if (!code.includes("// Multi-provider routing")) {
@@ -404,6 +411,27 @@ code = code.replace(
   "set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY to enable real responses"
 );
 
+// Fix 3: Handle object-format echo responses (WASM returns {response: "echo:..."})
+// Insert rawResponse extraction and use it for echo detection
+if (code.includes("const isEchoStub = typeof wasmResult === 'string'")) {
+  code = code.replace(
+    "const isEchoStub = typeof wasmResult === 'string'",
+    "const rawResponse = typeof wasmResult === 'string' ? wasmResult : (wasmResult?.response ?? wasmResult?.text ?? '');\\n        const isEchoStub = typeof rawResponse === 'string'"
+  );
+  code = code.replace(
+    "(wasmResult === `echo: \x24{input}`",
+    "(rawResponse === `echo: \x24{input}`"
+  );
+  code = code.replace(
+    "wasmResult.slice(0, 12)",
+    "rawResponse.slice(0, 12)"
+  );
+  code = code.replace(
+    "return `\x24{wasmResult}\\n[NOTE: bundled WASM agent has no LLM;",
+    "return `\x24{rawResponse}\\n[NOTE: bundled WASM agent has no LLM;"
+  );
+}
+
 fs.writeFileSync(target, code, "utf-8");
 ENDOFWASM
 
@@ -420,6 +448,8 @@ ENDOFWASM
 else
     warn "agent-wasm.js not found at $WASM_FILE — skipping Layer 2 patch."
 fi
+done
+# End of per-file patch loop
 
 # =============================================================================
 # Step 9: Download & copy local-agent-loop.js into npx cache
@@ -440,7 +470,7 @@ else
     }
 fi
 
-cp "$LOOP_TMP" "$BASE_DIR/local-agent-loop.js"
+cp "$LOOP_TMP" "$MAIN_BASE_DIR/local-agent-loop.js"
 ok "local-agent-loop.js installed."
 rm -f "$LOOP_TMP"
 
@@ -462,14 +492,14 @@ else
     }
 fi
 
-cp "$TOOLS_TMP" "$BASE_DIR/local-agent-tools.js"
+cp "$TOOLS_TMP" "$MAIN_BASE_DIR/local-agent-tools.js"
 ok "local-agent-tools.js installed."
 rm -f "$TOOLS_TMP"
 
 # =============================================================================
 # Step 11: Register localAgentTools in mcp-tools/index.js
 # =============================================================================
-INDEX_FILE="$BASE_DIR/index.js"
+INDEX_FILE="$MAIN_BASE_DIR/index.js"
 if [ -f "$INDEX_FILE" ]; then
     INDEX_BACKUP="$INDEX_FILE.bak.$(date +%s)"
     cp "$INDEX_FILE" "$INDEX_BACKUP"
