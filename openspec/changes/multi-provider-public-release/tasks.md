@@ -36,11 +36,11 @@
 
 ## 5. GitHub readiness
 
-- [ ] 5.1 Update remote origin from `ruvnet/ruflo` to user's own GitHub repo
-- [ ] 5.2 Commit all changes with descriptive commit message
-- [ ] 5.3 Push to GitHub and verify repo is accessible
-- [ ] 5.4 Verify `.mcp.json` is included in the pushed repo
-- [ ] 5.5 Remove hardcoded API keys from committed files (ensure keys only in `.env` or user's own settings)
+- [x] 5.1 Update remote origin from `ruvnet/ruflo` to user's own GitHub repo
+- [x] 5.2 Commit all changes with descriptive commit message
+- [x] 5.3 Push to GitHub and verify repo is accessible
+- [x] 5.4 Verify `.mcp.json` is included in the pushed repo
+- [x] 5.5 Remove hardcoded API keys from committed files (ensure keys only in `.env` or user's own settings)
 
 ## 6. Verification
 

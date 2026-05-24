@@ -220,10 +220,10 @@ if (!code.includes("// --- ruflo multi-provider routing")) {
   code = PROVIDER_TABLE + "\n" + code;
 }
 
-// ---- Add callOpenAICompat function ----
-const callOpenAICompatFn = [
+// ---- Add callMultiProviderCompat function ----
+const callMultiProviderCompatFn = [
 "",
-"async function callOpenAICompat(input, compatProvider) {",
+"async function callMultiProviderCompat(input, compatProvider) {",
 '  const url = compatProvider.baseURL + "/chat/completions";',
 "  const model = compatProvider.chosenModel || compatProvider.defaultModel;",
 "  const startedAt = Date.now();",
@@ -262,9 +262,9 @@ const callOpenAICompatFn = [
 "}",
 ].join("\n");
 
-// Only insert callOpenAICompat if not already present (idempotent)
-if (!code.includes("async function callOpenAICompat")) {
-  code = code.replace(/(export async function callAnthropicMessages)/, callOpenAICompatFn + "\n$1");
+// Only insert callMultiProviderCompat if not already present (idempotent)
+if (!code.includes("async function callMultiProviderCompat")) {
+  code = code.replace(/(export async function callAnthropicMessages)/, callMultiProviderCompatFn + "\n$1");
 }
 
 // ---- Add callDeepSeekMessages function ----
@@ -316,7 +316,7 @@ if (!code.includes("async function callDeepSeekMessages")) {
 if (!code.includes("// Multi-provider: check DeepSeek first")) {
   code = code.replace(
     /(async function callAnthropicMessages\([^)]*\)\s*\{)/,
-    "$1\n  // Multi-provider: check DeepSeek first\n  const __deepseekKey = process.env.DEEPSEEK_API_KEY;\n  const __explicitProvider = (process.env.RUFLO_PROVIDER || \"\").toLowerCase();\n  const __useDeepSeek = __explicitProvider === \"deepseek\" || (!__explicitProvider && !!__deepseekKey);\n  if (__useDeepSeek && __deepseekKey) {\n    var __dsTier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    var __dsModel = __dsTier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n    return callDeepSeekMessages(Object.assign({}, input, { apiKey: __deepseekKey, model: __dsModel }));\n  }\n\n  // Multi-provider: check OpenAI-compat providers (Qwen, Kimi, Zhipu, Doubao)\n  const __compat = findFirstOpenAICompatKey();\n  if (__compat && (__explicitProvider === __compat.provider || !__explicitProvider || __explicitProvider === \"ollama\")) {\n    var __tier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    __compat.chosenModel = __compat[__tier + \"Model\"] || __compat.defaultModel;\n    return callOpenAICompat(input, __compat);\n  }\n"
+    "$1\n  // Multi-provider: check DeepSeek first\n  const __deepseekKey = process.env.DEEPSEEK_API_KEY;\n  const __explicitProvider = (process.env.RUFLO_PROVIDER || \"\").toLowerCase();\n  const __useDeepSeek = __explicitProvider === \"deepseek\" || (!__explicitProvider && !!__deepseekKey);\n  if (__useDeepSeek && __deepseekKey) {\n    var __dsTier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    var __dsModel = __dsTier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n    return callDeepSeekMessages(Object.assign({}, input, { apiKey: __deepseekKey, model: __dsModel }));\n  }\n\n  // Multi-provider: check OpenAI-compat providers (Qwen, Kimi, Zhipu, Doubao)\n  const __compat = findFirstOpenAICompatKey();\n  if (__compat && (__explicitProvider === __compat.provider || !__explicitProvider || __explicitProvider === \"ollama\")) {\n    var __tier = input.model === \"haiku\" ? \"haiku\" : input.model === \"opus\" ? \"opus\" : \"sonnet\";\n    __compat.chosenModel = __compat[__tier + \"Model\"] || __compat.defaultModel;\n    return callMultiProviderCompat(input, __compat);\n  }\n"
   );
 }
 
@@ -330,23 +330,23 @@ if (!code.includes("// Multi-provider: check for DeepSeek or OpenAI-compat keys"
 
 // Update the API key check to allow multi-provider (split into simple replacements to avoid nested-brace regex issues)
 code = code.replace(
-  /const apiKey = process\.env\.ANTHROPIC_API_KEY;/,
-  "const apiKey = process.env.ANTHROPIC_API_KEY; const __hasOther = __useDS || __useCompat || process.env.OLLAMA_API_KEY;"
+  /const anthropicKey = process\.env\.ANTHROPIC_API_KEY;/,
+  "const anthropicKey = process.env.ANTHROPIC_API_KEY; const __hasOther = __useDS || __useCompat || process.env.OLLAMA_API_KEY;"
 );
 code = code.replace(
-  /if\s*\(!apiKey\)/,
-  "if (!apiKey && !__hasOther)"
+  /if\s*\(!anthropicKey\)/,
+  "if (!anthropicKey && !__hasOther)"
 );
 code = code.replace(
-  /'ANTHROPIC_API_KEY not set in environment'/,
+  /'No LLM provider configured. Set ANTHROPIC_API_KEY \(Tier-3\), OPENROUTER_API_KEY \(#2042\), or OLLAMA_API_KEY \(Tier-2 — #1725\).'/,
   "'No LLM provider configured. Set DEEPSEEK_API_KEY, DASHSCOPE_API_KEY (Qwen), MOONSHOT_API_KEY (Kimi), ZHIPU_API_KEY (GLM), ARK_API_KEY (Doubao), OLLAMA_API_KEY, or ANTHROPIC_API_KEY.'"
 );
 
 // Only add routing block if not already present (idempotent)
 if (!code.includes("// Multi-provider routing")) {
   code = code.replace(
-    /(saveAgentStore\(store\);)(\s*)(const startedAt = Date\.now\(\);)(\s*)(try\s*\{)/,
-    "$1\n\n// Multi-provider routing\nif (__useDS && __dsKey) {\n  const __tier = agent.model || \"sonnet\";\n  const __dsModel = __tier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n  const __dsResult = await callDeepSeekMessages({ prompt: input.prompt, systemPrompt: systemPrompt, model: __dsModel, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs, apiKey: __dsKey });\n  if (__dsResult.success) {\n    agent.status = \"idle\"; agent.lastResult = __dsResult; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __dsResult.messageId, model: __dsResult.model, stopReason: __dsResult.stopReason, output: __dsResult.output, usage: __dsResult.usage, durationMs: __dsResult.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __dsModel, error: __dsResult.error };\n}\n\nif (__useCompat && __compatP) {\n  const __tier = agent.model || \"sonnet\";\n  const __model = resolveMultiProviderModel(__tier, __compatP.provider);\n  __compatP.chosenModel = __model;\n  const __result = await callOpenAICompat({ prompt: input.prompt, systemPrompt: systemPrompt, model: __model, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs }, __compatP);\n  if (__result.success) {\n    agent.status = \"idle\"; agent.lastResult = __result; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __result.messageId, model: __result.model, stopReason: __result.stopReason, output: __result.output, usage: __result.usage, durationMs: __result.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __model, error: __result.error };\n}\n\n$3$4$5"
+    /(saveAgentStore\(store\);)(\s*)(const startedAt = Date\.now\(\);)([\s\S]*?)(const result = await callAnthropicMessages\()/,
+    "$1\n\n// Multi-provider routing\nif (__useDS && __dsKey) {\n  const __tier = agent.model || \"sonnet\";\n  const __dsModel = __tier === \"opus\" ? \"deepseek-v4-pro\" : \"deepseek-v4-flash\";\n  const __dsResult = await callDeepSeekMessages({ prompt: input.prompt, systemPrompt: systemPrompt, model: __dsModel, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs, apiKey: __dsKey });\n  if (__dsResult.success) {\n    agent.status = \"idle\"; agent.lastResult = __dsResult; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __dsResult.messageId, model: __dsResult.model, stopReason: __dsResult.stopReason, output: __dsResult.output, usage: __dsResult.usage, durationMs: __dsResult.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __dsModel, error: __dsResult.error };\n}\n\nif (__useCompat && __compatP) {\n  const __tier = agent.model || \"sonnet\";\n  const __model = resolveMultiProviderModel(__tier, __compatP.provider);\n  __compatP.chosenModel = __model;\n  const __result = await callMultiProviderCompat({ prompt: input.prompt, systemPrompt: systemPrompt, model: __model, maxTokens: input.maxTokens, temperature: input.temperature, timeoutMs: input.timeoutMs }, __compatP);\n  if (__result.success) {\n    agent.status = \"idle\"; agent.lastResult = __result; saveAgentStore(store);\n    return { success: true, agentId: input.agentId, messageId: __result.messageId, model: __result.model, stopReason: __result.stopReason, output: __result.output, usage: __result.usage, durationMs: __result.durationMs };\n  }\n  agent.status = \"idle\"; saveAgentStore(store);\n  return { success: false, agentId: input.agentId, model: __model, error: __result.error };\n}\n\n$3$4$5"
   );
 }
 
@@ -400,8 +400,8 @@ code = code.replace(
 
 // Fix 2: Update error message to mention DeepSeek
 code = code.replace(
-  /'set ANTHROPIC_API_KEY to enable real responses via Anthropic Messages API'/,
-  "'set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY to enable real responses'"
+  /set ANTHROPIC_API_KEY to enable real responses via Anthropic Messages API/,
+  "set ANTHROPIC_API_KEY or DEEPSEEK_API_KEY to enable real responses"
 );
 
 fs.writeFileSync(target, code, "utf-8");
@@ -697,7 +697,8 @@ if [ -z "$EXISTING_USER_KEY" ] && [ -f ".mcp.json" ]; then
   fi
 fi
 
-# Always lock MCP command to portable "ruflo mcp start" (without API key for now)
+# Always lock MCP command to portable "ruflo mcp start"
+# Merge any previously saved env vars (rescued from before ruflo init --force wipe)
 lock_mcp_config "$MCP_FILE" "$MCP_SERVER_NAME" ""
 if [ $? -eq 0 ]; then
   ok "MCP server locked: $MCP_SERVER_NAME → ruflo mcp start (portable)"
