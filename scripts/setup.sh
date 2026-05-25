@@ -36,30 +36,18 @@ safe_mktemp() {
   mktemp "$1" 2>/dev/null || echo "${1//XXXXXX/$$}"
 }
 
-info "Starting setup..."
 
-# =============================================================================
-# Step 1: Ensure ruflo is available globally (required for "ruflo mcp start")
+# Step 1: Ensure ruflo is available globally
 # =============================================================================
 if ! command -v ruflo &>/dev/null; then
-  info "ruflo not found in PATH. Installing globally via npm..."
   npm install -g ruflo@latest || {
     err "npm install -g ruflo@latest failed. Check your npm permissions or try:"
     err "  sudo npm install -g ruflo@latest"
     exit 1
   }
-  ok "ruflo installed globally."
-else
-  ok "ruflo already installed: $(which ruflo)"
 fi
-
-# =============================================================================
-# Step 2: Initialize project (always, idempotent — --force re-inits safely)
-# Creates .mcp.json with "npx ruflo@latest mcp start" (we'll replace later)
-# =============================================================================
-info "Initializing ruflo project..."
 if ruflo init --force 2>/dev/null; then
-  ok "ruflo project initialized."
+  :
 else
   warn "ruflo init had warnings (non-fatal). Continuing..."
 fi
@@ -167,9 +155,7 @@ ENDSTATUSLINEPATCH
   PATCH_RESULT=$(node "$STATUSLINE_PATCH" "$STATUSLINE_FILE" 2>/dev/null)
   rm -f "$STATUSLINE_PATCH"
   if echo "$PATCH_RESULT" | grep -q "STATUSLINE_PATCHED"; then
-    ok "Statusline patched — nested swarm-state.json structure supported."
-  else
-    info "Statusline already up-to-date (nested swarm handling present)."
+    :
   fi
 else
   warn "Statusline not found at $STATUSLINE_FILE — skipping patch."
@@ -179,8 +165,6 @@ fi
 # Step 3: Clean corrupted npx caches (left by old setup.sh versions)
 # Old versions patched npx cache files, causing SyntaxError on npx ruflo@latest.
 # We now patch global install only, so stale npx caches must be purged.
-# =============================================================================
-info "Checking npx cache..."
 NUKED=0
 for cache_dir in ~/.npm/_npx/*/; do
   [ -d "$cache_dir" ] 2>/dev/null || continue
@@ -192,8 +176,6 @@ for cache_dir in ~/.npm/_npx/*/; do
 done
 if [ $NUKED -gt 0 ]; then
     warn "Removed $NUKED stale npx cache(s)."
-else
-  ok "npx cache clean."
 fi
 
 # =============================================================================
@@ -226,8 +208,6 @@ fi
 MAIN_TARGET_FILE=$(echo "$TARGET_FILES" | head -1)
 MAIN_BASE_DIR=$(dirname "$MAIN_TARGET_FILE")
 
-info "Found $(echo "$TARGET_FILES" | wc -l | tr -d ' ') target file(s)."
-
 # Step 5-8: Patch all copies (loop)
 while IFS= read -r TARGET_FILE; do
   [ -z "$TARGET_FILE" ] && continue
@@ -235,8 +215,6 @@ while IFS= read -r TARGET_FILE; do
   # Step 5: Create backup
   BACKUP="$TARGET_FILE.bak.$(date +%s)"
   cp "$TARGET_FILE" "$BACKUP"
-
-info "Patching agent-execute-core.js with multi-provider routing..."
 
 PATCH_SCRIPT=$(safe_mktemp /tmp/ruflo-patch.XXXXXX.cjs)
 cat << 'ENDOFPATCH' > "$PATCH_SCRIPT"
@@ -481,7 +459,7 @@ fi
 
 # Step 7: Verify the L1 multi-provider patch
 if grep -q "OPENAI_COMPAT_PROVIDERS" "$TARGET_FILE"; then
-    ok "Multi-provider routing installed."
+  :
 else
     err "Patch verification failed. Restoring backup..."
     cp "$BACKUP" "$TARGET_FILE"
@@ -499,7 +477,6 @@ WASM_FILE="$DIST_DIR/ruvector/agent-wasm.js"
 if [ -f "$WASM_FILE" ]; then
     WASM_BACKUP="$WASM_FILE.bak.$(date +%s)"
     cp "$WASM_FILE" "$WASM_BACKUP"
-    info "Layer 2 WASM Agent backup at $WASM_BACKUP"
 
     PATCH_WASM=$(safe_mktemp /tmp/ruflo-patch-wasm.XXXXXX.cjs)
     cat << 'ENDOFWASM' > "$PATCH_WASM"
@@ -548,7 +525,7 @@ ENDOFWASM
     rm -f "$PATCH_WASM"
 
     if [ $WASM_EXIT -eq 0 ]; then
-        ok "L2 WASM Agent: DEEPSEEK_API_KEY accepted."
+        :
     else
         warn "Layer 2 patch failed (non-fatal). WASM agents will need ANTHROPIC_API_KEY."
         cp "$WASM_BACKUP" "$WASM_FILE"
@@ -573,7 +550,6 @@ download_or_copy() {
   elif [ -f "$SCRIPT_DIR/${filename}" ]; then
       cp "$SCRIPT_DIR/${filename}" "$tmpfile"
   else
-      info "Downloading ${filename} from GitHub..."
       curl -fsSL "$REPO_RAW/src/${filename}" -o "$tmpfile" || {
           err "Failed to download ${filename}. Check your network."
           rm -f "$tmpfile"
@@ -582,7 +558,6 @@ download_or_copy() {
   fi
 
   cp "$tmpfile" "$dest_dir/${filename}"
-  ok "${filename} installed."
   rm -f "$tmpfile"
 }
 
@@ -605,7 +580,7 @@ if [ -f "$INDEX_FILE" ]; then
     cp "$INDEX_FILE" "$INDEX_BACKUP"
 
     if grep -q "localAgentTools" "$INDEX_FILE" 2>/dev/null; then
-        ok "localAgentTools already registered."
+        :
     else
         PATCH_INDEX=$(safe_mktemp /tmp/ruflo-patch-index.XXXXXX.cjs)
         cat << 'ENDOFINDEX' > "$PATCH_INDEX"
@@ -626,7 +601,7 @@ ENDOFINDEX
         rm -f "$PATCH_INDEX"
 
         if [ $INDEX_EXIT -eq 0 ] && grep -q "localAgentTools" "$INDEX_FILE"; then
-            ok "localAgentTools registered."
+            :
         else
             warn "Failed to register localAgentTools (non-fatal)."
             cp "$INDEX_BACKUP" "$INDEX_FILE"
@@ -638,11 +613,8 @@ fi
 # =============================================================================
 # Step 12: Final verification
 # =============================================================================
-echo ""
 ok "Ruflo multi-provider setup complete!"
 warn "Do NOT run 'claude mcp add ruflo' — it will overwrite this config."
-info "Re-run this script after 'npm update -g ruflo' to re-apply patches."
-echo ""
 
 # =============================================================================
 # Step 13: Lock MCP server to global ruflo (always — even without API key)
@@ -751,7 +723,7 @@ fs.renameSync(tmpPath, target);
 console.log("MCP_CONFIG_OK server=" + serverName + " file=" + target + " cmd=ruflo");
 ENDLOCK
 
-  node "$LOCK_SCRIPT" "$mcp_file" "$server_name" "$env_vars_to_add"
+  node "$LOCK_SCRIPT" "$mcp_file" "$server_name" "$env_vars_to_add" >/dev/null
   local rc=$?
   rm -f "$LOCK_SCRIPT"
   return $rc
@@ -814,12 +786,12 @@ if (added > 0) {
 }
 ENDSYNCENV
 
-  node "$SYNC_ENV_SCRIPT" "$settings_file" "$env_vars_to_add"
+  node "$SYNC_ENV_SCRIPT" "$settings_file" "$env_vars_to_add" >/dev/null
   local rc=$?
   rm -f "$SYNC_ENV_SCRIPT"
 
   if [ $rc -eq 0 ]; then
-    ok "Settings env synced — API keys added to .claude/settings.json (reliable MCP inheritance)"
+    :
   else
     warn "Failed to sync settings.json env (non-fatal)."
   fi
@@ -938,9 +910,9 @@ ENDSYNC
     RESULT=$(node "$SYNC_SCRIPT" 2>/dev/null)
     rm -f "$SYNC_SCRIPT"
     if echo "$RESULT" | grep -q "SYNC_OK"; then
-      ok "~/.claude.json synced — no more conflicting endpoints."
+      :
     else
-      info "~/.claude.json not modified (already consistent or no entries)."
+      :
     fi
   fi
 else
