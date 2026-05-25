@@ -78,8 +78,34 @@ const fs = require("fs");
 const file = process.argv[2];
 let src = fs.readFileSync(file, "utf-8");
 
-// Replace getSwarmStatus to handle nested { swarms: { swarmId: { agents, status, updatedAt } } }
-const oldFunc = /function getSwarmStatus\(\) \{[\s\S]*?  const staleThresholdMs[\s\S]*?if \(swarmState\) \{[\s\S]*?const updatedAt = swarmState\.updatedAt \|\| swarmState\.startedAt;[\s\S]*?const age = updatedAt \? now - new Date\(updatedAt\)\.getTime\(\) : Infinity;[\s\S]*?if \(age < staleThresholdMs\) \{[\s\S]*?return \{[\s\S]*?activeAgents: \(swarmState\.agents && swarmState\.agents\.length\) \|\| swarmState\.agentCount \|\| 0,[\s\S]*?maxAgents: swarmState\.maxAgents \|\| CONFIG\.maxAgents,[\s\S]*?coordinationActive: true,[\s\S]*?\};[\s\S]*?\}[\s\S]*?\}/;
+// If already patched (nested swarmState.swarms handling), skip
+if (src.includes('swarmState.swarms && typeof swarmState.swarms')) {
+  console.log("STATUSLINE_ALREADY_PATCHED");
+  process.exit(0);
+}
+
+// Find function getSwarmStatus() { ... } using brace counting
+const funcStart = src.indexOf('function getSwarmStatus() {');
+if (funcStart === -1) {
+  console.log("STATUSLINE_NOT_FOUND");
+  process.exit(0);
+}
+
+let braceCount = 0;
+let inFunc = false;
+let funcEnd = -1;
+for (let i = funcStart; i < src.length; i++) {
+  if (src[i] === '{') { braceCount++; inFunc = true; }
+  else if (src[i] === '}') {
+    braceCount--;
+    if (inFunc && braceCount === 0) { funcEnd = i; break; }
+  }
+}
+
+if (funcEnd === -1) {
+  console.log("STATUSLINE_NOT_FOUND");
+  process.exit(0);
+}
 
 const newFunc = `function getSwarmStatus() {
   const staleThresholdMs = 5 * 60 * 1000;
@@ -115,17 +141,28 @@ const newFunc = `function getSwarmStatus() {
       };
     }
   }
+
+  const activityData = readJSON(path.join(CWD, '.claude-flow', 'metrics', 'swarm-activity.json'));
+  if (activityData && activityData.swarm) {
+    const updatedAt = activityData.timestamp || (activityData.swarm && activityData.swarm.timestamp);
+    const age = updatedAt ? now - new Date(updatedAt).getTime() : Infinity;
+    if (age < staleThresholdMs) {
+      return {
+        activeAgents: activityData.swarm.agent_count || 0,
+        maxAgents: CONFIG.maxAgents,
+        coordinationActive: activityData.swarm.coordination_active || activityData.swarm.active || false,
+      };
+    }
+  }
+
+  return { activeAgents: 0, maxAgents: CONFIG.maxAgents, coordinationActive: false };
 }`;
 
-if (oldFunc.test(src)) {
-  src = src.replace(oldFunc, newFunc);
-  const tmpPath = file + ".tmp." + Date.now();
-  fs.writeFileSync(tmpPath, src, "utf-8");
-  fs.renameSync(tmpPath, file);
-  console.log("STATUSLINE_PATCHED");
-} else {
-  console.log("STATUSLINE_ALREADY_PATCHED");
-}
+src = src.slice(0, funcStart) + newFunc + src.slice(funcEnd + 1);
+const tmpPath = file + ".tmp." + Date.now();
+fs.writeFileSync(tmpPath, src, "utf-8");
+fs.renameSync(tmpPath, file);
+console.log("STATUSLINE_PATCHED");
 ENDSTATUSLINEPATCH
   PATCH_RESULT=$(node "$STATUSLINE_PATCH" "$STATUSLINE_FILE" 2>/dev/null)
   rm -f "$STATUSLINE_PATCH"
