@@ -36,7 +36,7 @@ safe_mktemp() {
   mktemp "$1" 2>/dev/null || echo "${1//XXXXXX/$$}"
 }
 
-info "Starting multi-provider setup..."
+info "Starting setup..."
 
 # =============================================================================
 # Step 1: Ensure ruflo is available globally (required for "ruflo mcp start")
@@ -180,7 +180,7 @@ fi
 # Old versions patched npx cache files, causing SyntaxError on npx ruflo@latest.
 # We now patch global install only, so stale npx caches must be purged.
 # =============================================================================
-info "Checking npx cache for stale patches..."
+info "Checking npx cache..."
 NUKED=0
 for cache_dir in ~/.npm/_npx/*/; do
   [ -d "$cache_dir" ] 2>/dev/null || continue
@@ -191,7 +191,7 @@ for cache_dir in ~/.npm/_npx/*/; do
   fi
 done
 if [ $NUKED -gt 0 ]; then
-  warn "Removed $NUKED stale npx cache(s) — they had old patches that would break npx ruflo@latest."
+    warn "Removed $NUKED stale npx cache(s)."
 else
   ok "npx cache clean."
 fi
@@ -226,8 +226,7 @@ fi
 MAIN_TARGET_FILE=$(echo "$TARGET_FILES" | head -1)
 MAIN_BASE_DIR=$(dirname "$MAIN_TARGET_FILE")
 
-info "Found $(echo "$TARGET_FILES" | wc -l | tr -d ' ') target file(s):"
-while IFS= read -r f; do [ -n "$f" ] && info "  - $f"; done <<< "$TARGET_FILES"
+info "Found $(echo "$TARGET_FILES" | wc -l | tr -d ' ') target file(s)."
 
 # Step 5-8: Patch all copies (loop)
 while IFS= read -r TARGET_FILE; do
@@ -236,9 +235,7 @@ while IFS= read -r TARGET_FILE; do
   # Step 5: Create backup
   BACKUP="$TARGET_FILE.bak.$(date +%s)"
   cp "$TARGET_FILE" "$BACKUP"
-  info "Backup created at $BACKUP"
 
-# Step 6: Apply L1 multi-provider patch (idempotent — safe to re-run)
 info "Patching agent-execute-core.js with multi-provider routing..."
 
 PATCH_SCRIPT=$(safe_mktemp /tmp/ruflo-patch.XXXXXX.cjs)
@@ -484,7 +481,7 @@ fi
 
 # Step 7: Verify the L1 multi-provider patch
 if grep -q "OPENAI_COMPAT_PROVIDERS" "$TARGET_FILE"; then
-    ok "Multi-provider routing (L1) installed successfully!"
+    ok "Multi-provider routing installed."
 else
     err "Patch verification failed. Restoring backup..."
     cp "$BACKUP" "$TARGET_FILE"
@@ -551,7 +548,7 @@ ENDOFWASM
     rm -f "$PATCH_WASM"
 
     if [ $WASM_EXIT -eq 0 ]; then
-        ok "Layer 2 WASM Agent patched — DEEPSEEK_API_KEY now accepted."
+        ok "L2 WASM Agent: DEEPSEEK_API_KEY accepted."
     else
         warn "Layer 2 patch failed (non-fatal). WASM agents will need ANTHROPIC_API_KEY."
         cp "$WASM_BACKUP" "$WASM_FILE"
@@ -606,11 +603,9 @@ INDEX_FILE="$MAIN_BASE_DIR/index.js"
 if [ -f "$INDEX_FILE" ]; then
     INDEX_BACKUP="$INDEX_FILE.bak.$(date +%s)"
     cp "$INDEX_FILE" "$INDEX_BACKUP"
-    info "MCP index backup at $INDEX_BACKUP"
 
-    # Check if already registered
     if grep -q "localAgentTools" "$INDEX_FILE" 2>/dev/null; then
-        ok "localAgentTools already registered in mcp-tools/index.js."
+        ok "localAgentTools already registered."
     else
         PATCH_INDEX=$(safe_mktemp /tmp/ruflo-patch-index.XXXXXX.cjs)
         cat << 'ENDOFINDEX' > "$PATCH_INDEX"
@@ -618,7 +613,6 @@ const fs = require("fs");
 const target = process.argv[2];
 let code = fs.readFileSync(target, "utf-8");
 
-// Add export for localAgentTools before the last export line
 code = code.replace(
   /(export \{[^}]*\}\s*from\s*'\.\/autopilot-tools\.js';)/,
   "$1\n" + "export { localAgentTools } from './local-agent-tools.js';"
@@ -632,43 +626,22 @@ ENDOFINDEX
         rm -f "$PATCH_INDEX"
 
         if [ $INDEX_EXIT -eq 0 ] && grep -q "localAgentTools" "$INDEX_FILE"; then
-            ok "localAgentTools registered in mcp-tools/index.js."
+            ok "localAgentTools registered."
         else
-            warn "Failed to register localAgentTools (non-fatal). Manual registration may be needed."
+            warn "Failed to register localAgentTools (non-fatal)."
             cp "$INDEX_BACKUP" "$INDEX_FILE"
         fi
     fi
 else
     warn "mcp-tools/index.js not found — skipping tool registration."
 fi
-
 # =============================================================================
 # Step 12: Final verification
 # =============================================================================
 echo ""
 ok "Ruflo multi-provider setup complete!"
-echo ""
-info "What was installed:"
-echo "  L1: agent_execute → multi-provider routing (DeepSeek, Qwen, Kimi, Zhipu, Doubao)"
-echo "  L2: wasm_agent_*  → DEEPSEEK_API_KEY accepted (no longer Anthropic-only)"
-echo "  L3: local_agent_* → Local agent loop via DeepSeek/Qwen function calling"
-echo ""
-info "MCP config: .mcp.json → ruflo mcp start (portable)"
-echo ""
-warn "IMPORTANT: Do NOT run 'claude mcp add ruflo' after this setup —"
-echo "  it will overwrite the patched config. If you accidentally do,"
-echo "  just re-run this script: curl -fsSL ... | bash"
-echo ""
-info "Tools available:"
-echo "  local_agent_create     — Create a new local agent"
-echo "  local_agent_prompt     — Run a task (supports async: true)"
-echo "  local_agent_status     — Check progress"
-echo "  local_agent_events     — View full transcript"
-echo "  local_agent_list       — List all local agents"
-echo "  local_agent_terminate  — Stop and clean up"
-echo ""
-info "Note: If you update ruflo globally (npm update -g ruflo), patches may be"
-echo "  overwritten. Just re-run this script: bash scripts/setup.sh"
+warn "Do NOT run 'claude mcp add ruflo' — it will overwrite this config."
+info "Re-run this script after 'npm update -g ruflo' to re-apply patches."
 echo ""
 
 # =============================================================================
@@ -800,7 +773,6 @@ sync_settings_env() {
   local settings_file=".claude/settings.json"
   if [ ! -f "$settings_file" ]; then
     echo '{"env":{}}' > "$settings_file"
-    info "Created .claude/settings.json for API key inheritance."
   fi
 
   SYNC_ENV_SCRIPT=$(safe_mktemp /tmp/ruflo-sync-env.XXXXXX.cjs)
@@ -875,9 +847,7 @@ if [ -f "$HOME/.claude.json" ]; then
 
   if [ -n "$EXISTING_USER_KEY" ]; then
     MCP_SERVER_NAME="$EXISTING_USER_KEY"
-    warn "Detected user-level MCP entry in ~/.claude.json: \"$EXISTING_USER_KEY\""
-    info "Project .mcp.json will use the same name → project config overrides user config."
-    info "~/.claude.json entry is NOT deleted — just overridden by project .mcp.json."
+    warn "Detected ~/.claude.json entry: \"$EXISTING_USER_KEY\" — using same key name."
   fi
 fi
 
@@ -904,8 +874,7 @@ fi
 # Merge any previously saved env vars (rescued from before ruflo init --force wipe)
 lock_mcp_config "$MCP_FILE" "$MCP_SERVER_NAME" ""
 if [ $? -eq 0 ]; then
-  ok "MCP server locked: $MCP_SERVER_NAME → ruflo mcp start (portable)"
-  info "Config written to: $MCP_FILE"
+  ok "MCP config locked: $MCP_SERVER_NAME → ruflo mcp start"
 
   # Sync existing mcp.json env vars to settings.json (reliable MCP inheritance)
   EXISTING_ENV=$(node -e "
@@ -922,8 +891,7 @@ if [ $? -eq 0 ]; then
     sync_settings_env "$EXISTING_ENV"
   fi
   if [ -n "$EXISTING_USER_KEY" ]; then
-    warn "~/.claude.json has \"$EXISTING_USER_KEY\" — syncing to match project config."
-    info "Keeps the entry, switches from npx to global ruflo (方案C: same key → project overrides)."
+    warn "~/.claude.json has \"$EXISTING_USER_KEY\" — syncing..."
 
     SYNC_SCRIPT=$(safe_mktemp /tmp/ruflo-sync-user.XXXXXX.cjs)
     cat << 'ENDSYNC' > "$SYNC_SCRIPT"
@@ -1084,14 +1052,11 @@ test_connectivity() {
 print_manual_guide() {
   echo ""
   info "Manual API key configuration:"
-  echo "  1. Add one of these env vars to .mcp.json under mcpServers.ruflo.env:"
+  echo "  Add one of these env vars to .mcp.json under mcpServers.ruflo.env:"
   for i in "${!PROVIDER_NAMES[@]}"; do
-    printf "     %-20s → %s\n" "${PROVIDER_VARS[$i]}" "${PROVIDER_NAMES[$i]}"
+    printf "    %-20s → %s\n" "${PROVIDER_VARS[$i]}" "${PROVIDER_NAMES[$i]}"
   done
-  echo "  2. Or set the env var in your shell profile (~/.zshrc or ~/.bashrc)"
-  echo "  3. Optional: MAX_CONCURRENT_LOCAL_AGENTS=5 (default: 3)"
-  echo "  4. Restart Claude Code (or reload the MCP server)"
-  echo "  5. Test: local_agent_create + local_agent_prompt"
+  echo "  Or set the env var in your shell profile (~/.zshrc / ~/.bashrc)"
 }
 
 # ---- TTY detection: skip interactive menu in non-TTY (pipe, CI) ----
@@ -1116,10 +1081,6 @@ if [ -t 0 ] || [ -c /dev/tty ]; then
     echo ""
     info "Skipping API key configuration."
     print_manual_guide
-    echo ""
-    info "One-liner for new users:"
-    echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
-    echo ""
     exit 0
   fi
 
@@ -1183,24 +1144,13 @@ if [ -t 0 ] || [ -c /dev/tty ]; then
         info "Set it manually: export $ENV_VAR=\"<your-api-key>\""
       fi
 
-      # ---- Doctor summary ----
+      # ---- Summary ----
       echo ""
-      echo "  ╔══════════════════════════════════════════════════╗"
-      echo "  ║     Configuration Complete — Summary             ║"
-      echo "  ╚══════════════════════════════════════════════════╝"
+      echo "  Provider: $PROVIDER_CHOICE"
+      echo "  API key:  $MASKED ✓ verified"
+      echo "  Config:   $MCP_FILE"
       echo ""
-      echo "    Provider:       $PROVIDER_CHOICE"
-      echo "    API key:        $MASKED  ✓ verified"
-      echo "    Default model:  $DEFAULT_MODEL"
-      echo "    Env var:        $ENV_VAR"
-      echo "    Config file:    $MCP_FILE"
-      echo "    MCP server:     ruflo mcp start (portable)"
-      echo ""
-      warn "Do NOT run 'claude mcp add ruflo' — it will overwrite this config."
-      echo "  If you accidentally do, re-run: bash scripts/setup.sh"
-      echo ""
-      info "Next: Restart Claude Code, then test with:"
-      echo "  local_agent_create → local_agent_prompt"
+      warn "Do NOT run 'claude mcp add ruflo' — re-run setup.sh if overwritten."
       echo ""
       exit 0
     elif [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
@@ -1224,31 +1174,17 @@ if [ -t 0 ] || [ -c /dev/tty ]; then
         echo ""
         info "Skipping API key configuration."
         print_manual_guide
-        echo ""
-        info "One-liner for new users:"
-        echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
-        echo ""
         exit 0
       fi
       echo ""
-      info "Let's try again. (2/3) Enter your API key for $PROVIDER_CHOICE"
     fi
   done
 
-  # Max attempts exhausted
   echo ""
   warn "3 attempts exhausted — switching to manual configuration."
   print_manual_guide
-  echo ""
-  info "One-liner for new users:"
-  echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
-  echo ""
 
 else
   # ---- Non-interactive mode: print manual guide ----
   print_manual_guide
-  echo ""
-  info "One-liner for new users:"
-  echo "  curl -fsSL $REPO_RAW/scripts/setup.sh | bash"
-  echo ""
 fi
